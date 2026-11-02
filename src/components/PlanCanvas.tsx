@@ -6,6 +6,7 @@ import {
   distance,
   formatFeetInches,
   itemLength,
+  itemBounds,
   moveItem,
   newItem,
   snapPoint,
@@ -44,6 +45,7 @@ interface Gesture {
   start: Point;
   current: Point;
   pointerId: number;
+  points?: Point[];
 }
 
 interface PanGesture {
@@ -147,6 +149,11 @@ function LineDrawing({ item }: { item: DrawingItem }) {
       )}
     </>
   );
+}
+
+function FreehandDrawing({ item }: { item: DrawingItem }) {
+  const points = (item.points ?? []).flatMap((point) => [point.x, point.y]);
+  return <Line points={points} stroke={item.color} strokeWidth={0.06} lineCap="round" lineJoin="round" hitStrokeWidth={0.38} />;
 }
 
 function RectangleDrawing({ item }: { item: DrawingItem }) {
@@ -337,7 +344,9 @@ const DrawingShape = memo(function DrawingShape({
       onDragMove={snapDrag}
       onDragEnd={finishDrag}
     >
-      {item.kind === "wall" || item.kind === "dashed" ? (
+      {item.kind === "freehand" ? (
+        <FreehandDrawing item={item} />
+      ) : item.kind === "wall" || item.kind === "dashed" ? (
         <LineDrawing item={{ ...item, showDimension: showDimensions && item.showDimension }} />
       ) : item.kind === "rectangle" ? (
         <RectangleDrawing item={{ ...item, showDimension: showDimensions && item.showDimension }} />
@@ -355,7 +364,11 @@ const DrawingShape = memo(function DrawingShape({
           padding={0.08}
         />
       )}
-      {selected && (
+      {selected && item.kind === "freehand" && (() => {
+        const bounds = itemBounds(item);
+        return <Rect x={bounds.left - item.x - 0.08} y={bounds.top - item.y - 0.08} width={bounds.right - bounds.left + 0.16} height={bounds.bottom - bounds.top + 0.16} stroke="#3b91ce" strokeWidth={0.025} dash={[0.08, 0.06]} listening={false} />;
+      })()}
+      {selected && item.kind !== "freehand" && (
         item.kind === "circle" ? (
           <Circle
             radius={distance({ x: item.x, y: item.y }, { x: item.x2, y: item.y2 }) + 0.08}
@@ -615,10 +628,10 @@ export default function PlanCanvas({
       const previousLine = chainRef.current?.kind === activeTool
         ? items.find((item) => item.id === chainRef.current?.itemId)
         : undefined;
-      const start = previousLine
+      const start = activeTool === "freehand" ? point : previousLine
         ? { x: previousLine.x2, y: previousLine.y2 }
         : snap(point).point;
-      const nextGesture = { kind: activeTool, start, current: start, pointerId: event.pointerId };
+      const nextGesture = { kind: activeTool, start, current: start, pointerId: event.pointerId, points: activeTool === "freehand" ? [{ x: 0, y: 0 }] : undefined };
       gestureRef.current = nextGesture;
       setGesture(nextGesture);
     } else if (target === target.getStage()) {
@@ -668,7 +681,9 @@ export default function PlanCanvas({
 
     const currentGesture = gestureRef.current;
     if (currentGesture?.pointerId === event.pointerId) {
-      const nextGesture = { ...currentGesture, current: snap(point).point };
+      const current = currentGesture.kind === "freehand" ? point : snap(point).point;
+      const points = currentGesture.points ? [...currentGesture.points, { x: current.x - currentGesture.start.x, y: current.y - currentGesture.start.y }] : undefined;
+      const nextGesture = { ...currentGesture, current, points };
       gestureRef.current = nextGesture;
       setGesture(nextGesture);
     }
@@ -693,8 +708,9 @@ export default function PlanCanvas({
     if (panRef.current?.pointerId === event.pointerId) panRef.current = null;
     const currentGesture = gestureRef.current;
     if (!currentGesture || currentGesture.pointerId !== event.pointerId) return;
-    if (!cancelled && distance(currentGesture.start, currentGesture.current) > 0.04) {
+    if (!cancelled && (currentGesture.kind === "freehand" ? (currentGesture.points?.length ?? 0) >= 2 : distance(currentGesture.start, currentGesture.current) > 0.04)) {
       const item = newItem(currentGesture.kind, currentGesture.start, currentGesture.current);
+      if (currentGesture.points) item.points = currentGesture.points;
       onCreate(item);
       chainRef.current = item.kind === "wall" || item.kind === "dashed"
         ? { kind: item.kind, itemId: item.id }
@@ -725,7 +741,7 @@ export default function PlanCanvas({
   }
 
   const preview = gesture
-    ? newItem(gesture.kind, gesture.start, gesture.current)
+    ? { ...newItem(gesture.kind, gesture.start, gesture.current), points: gesture.points }
     : null;
 
   return (
@@ -774,7 +790,9 @@ export default function PlanCanvas({
           ))}
           {preview && (
             <Group x={preview.x} y={preview.y} opacity={0.6} listening={false}>
-              {preview.kind === "wall" || preview.kind === "dashed" ? (
+              {preview.kind === "freehand" ? (
+                <FreehandDrawing item={preview} />
+              ) : preview.kind === "wall" || preview.kind === "dashed" ? (
                 <LineDrawing item={preview} />
               ) : preview.kind === "rectangle" ? (
                 <RectangleDrawing item={preview} />

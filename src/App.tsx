@@ -5,11 +5,13 @@ import {
   Download,
   FileImage,
   FileJson,
+  FileText,
   Grid2X2,
   Minus,
   MousePointer2,
   MoveUpRight,
   Plus,
+  Pencil,
   Redo2,
   Ruler,
   Save,
@@ -22,7 +24,8 @@ import {
 } from "lucide-react";
 import Inspector from "./components/Inspector";
 import PlanCanvas, { DEFAULT_CAMERA } from "./components/PlanCanvas";
-import { isDrawingFile } from "./model";
+import { isDrawingFile, itemBounds } from "./model";
+import { drawingAsPdf } from "./io/drawingPdf";
 import type { DrawingFile, DrawingItem, DrawingTool, Point } from "./model";
 import {
   downloadFile,
@@ -45,6 +48,7 @@ const tools: Array<{
   { id: "circle", label: "Circle", shortcut: "C", icon: Circle },
   { id: "dimension", label: "Dimension", shortcut: "M", icon: Ruler },
   { id: "note", label: "Note", shortcut: "N", icon: Type },
+  { id: "freehand", label: "Freehand", shortcut: "F", icon: Pencil },
 ];
 
 function storageKey() {
@@ -342,18 +346,7 @@ function App() {
       setCamera(DEFAULT_CAMERA);
       return;
     }
-    const bounds = items.map((item) => {
-      if (item.kind === "circle") {
-        const radius = Math.hypot(item.x2 - item.x, item.y2 - item.y);
-        return { minX: item.x - radius, maxX: item.x + radius, minY: item.y - radius, maxY: item.y + radius };
-      }
-      return {
-        minX: Math.min(item.x, item.x2),
-        maxX: Math.max(item.x, item.x2),
-        minY: Math.min(item.y, item.y2),
-        maxY: Math.max(item.y, item.y2),
-      };
-    });
+    const bounds = items.map((item) => { const b = itemBounds(item); return { minX: b.left, maxX: b.right, minY: b.top, maxY: b.bottom }; });
     const minX = Math.min(...bounds.map((bound) => bound.minX));
     const maxX = Math.max(...bounds.map((bound) => bound.maxX));
     const minY = Math.min(...bounds.map((bound) => bound.minY));
@@ -383,11 +376,16 @@ function App() {
     return { ...currentFile(), name: projectName.trim() || "Untitled plan" };
   }
 
-  function handleExport(kind: "svg" | "png" | "json") {
+  function handleExport(kind: "svg" | "png" | "json" | "pdf") {
     const file = drawingForExport();
     if (kind === "svg") downloadSvg(file);
     else if (kind === "png") downloadPng(file, showToast);
-    else {
+    else if (kind === "pdf") {
+      void drawingAsPdf(file).then((pdf) => downloadFile(`${safeFileName(file.name)}.pdf`, pdf, "application/pdf")).catch((error: unknown) => {
+        console.error("PDF export failed", error);
+        showToast("Could not export the PDF.");
+      });
+    } else {
       downloadFile(
         `${safeFileName(file.name)}.json`,
         JSON.stringify(file, null, 2),
@@ -468,6 +466,7 @@ function App() {
               <div className="export-menu">
                 <button onClick={() => handleExport("svg")}><FileImage size={15} /> Download SVG</button>
                 <button onClick={() => handleExport("png")}><FileImage size={15} /> Download PNG</button>
+                <button onClick={() => handleExport("pdf")}><FileText size={15} /> Download PDF</button>
                 <button onClick={() => handleExport("json")}><FileJson size={15} /> Drawing data</button>
                 <button onClick={() => { setExportOpen(false); importRef.current?.click(); }}><Upload size={15} /> Import drawing</button>
               </div>

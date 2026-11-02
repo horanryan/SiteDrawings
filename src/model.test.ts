@@ -2,12 +2,16 @@ import { describe, expect, it, vi } from "vitest";
 import {
   formatFeetInches,
   isDrawingFile,
+  itemBounds,
+  moveItem,
   newItem,
   parseFeetInches,
   resizeLine,
   snapPoint,
 } from "./model";
 import type { DrawingFile } from "./model";
+import { drawingAsSvg } from "./io/drawingFiles";
+import { jpegAsPdf } from "./io/drawingPdf";
 
 describe("plan measurements", () => {
   it("creates distinct items when randomUUID is unavailable", () => {
@@ -79,6 +83,28 @@ describe("plan snapping", () => {
 });
 
 describe("drawing file validation", () => {
+  it("preserves freehand geometry through save, move, bounds and SVG export", () => {
+    const stroke = { ...newItem("freehand", { x: 2, y: 3 }, { x: 2, y: 3 }), points: [{ x: 0, y: 0 }, { x: 4, y: -2 }, { x: 0, y: 0 }] };
+    const file: DrawingFile = { version: 1, name: "Sketch", gridFeet: 1, items: [stroke] };
+    expect(isDrawingFile(JSON.parse(JSON.stringify(file)))).toBe(true);
+    expect(isDrawingFile({ ...file, items: [{ ...stroke, points: [{ x: NaN, y: 0 }] }] })).toBe(false);
+    expect(itemBounds(moveItem(stroke, 1, 2))).toEqual({ left: 3, top: 3, right: 7, bottom: 5 });
+    expect(drawingAsSvg(file)).toContain('<polyline points="144,216 432,72 144,216"');
+  });
+
+  it("creates a PDF with a valid cross-reference table", async () => {
+    const pdf = jpegAsPdf(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), 100, 50);
+    const bytes = new Uint8Array(await pdf.arrayBuffer());
+    const text = new TextDecoder("latin1").decode(bytes);
+    expect(pdf.type).toBe("application/pdf");
+    expect(text).toContain("/MediaBox [0 0 792 612]");
+    const xref = Number(text.match(/startxref\n(\d+)/)?.[1]);
+    expect(text.slice(xref, xref + 4)).toBe("xref");
+    for (const [, offset, object] of Array.from(text.matchAll(/(\d{10}) 00000 n \n/g), (match, index) => [match[0], match[1], index + 1] as const)) {
+      expect(text.slice(Number(offset)).startsWith(`${object} 0 obj`)).toBe(true);
+    }
+  });
+
   it("accepts a saved drawing and rejects malformed geometry", () => {
     const file: DrawingFile = {
       version: 1,

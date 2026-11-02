@@ -1,4 +1,4 @@
-import { distance, formatFeetInches } from "../model";
+import { formatFeetInches, itemBounds } from "../model";
 import type { DrawingFile, DrawingItem } from "../model";
 
 const EXPORT_SCALE = 72;
@@ -14,27 +14,6 @@ function xml(value: string) {
     };
     return entities[character];
   });
-}
-
-function itemBounds(item: DrawingItem) {
-  if (item.kind === "circle") {
-    const radius = distance(
-      { x: item.x, y: item.y },
-      { x: item.x2, y: item.y2 },
-    );
-    return {
-      left: item.x - radius,
-      top: item.y - radius,
-      right: item.x + radius,
-      bottom: item.y + radius,
-    };
-  }
-  return {
-    left: Math.min(item.x, item.x2),
-    top: Math.min(item.y, item.y2),
-    right: Math.max(item.x, item.x2),
-    bottom: Math.max(item.y, item.y2),
-  };
 }
 
 function dimensionLabel(text: string, x: number, y: number) {
@@ -56,6 +35,11 @@ function renderItem(item: DrawingItem): string {
   const dy = y2 - y;
   const length = Math.hypot(dx, dy) || 1;
   const color = xml(item.color);
+
+  if (item.kind === "freehand") {
+    const points = (item.points ?? []).map((point) => `${(item.x + point.x) * scale},${(item.y + point.y) * scale}`).join(" ");
+    return `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+  }
 
   if (item.kind === "wall" || item.kind === "dashed") {
     const line = `<line x1="${x}" y1="${y}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="2.5" stroke-linecap="round"${item.kind === "dashed" ? ' stroke-dasharray="9 6"' : ""}/>`;

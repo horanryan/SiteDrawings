@@ -261,16 +261,16 @@ export default function Inspector({
                     onCommit={(heightLabel) => onUpdate({ ...item, heightLabel })}
                   />
                 </>
-              ) : (
+              ) : item.kind !== "freehand" ? (
                 <TextProperty
                   label={item.kind === "note" ? "Note" : "Dimension label"}
                   value={item.label ?? ""}
                   placeholder={item.kind === "note" ? "Enter a note" : "Automatic"}
                   onCommit={(label) => onUpdate({ ...item, label })}
                 />
-              )}
+              ) : null}
 
-              {item.kind !== "note" && (
+              {item.kind !== "note" && item.kind !== "freehand" && (
                 <label className="check-row">
                   <input
                     type="checkbox"
@@ -301,6 +301,7 @@ export default function Inspector({
             ["C", "Circle"],
             ["M", "Dimension"],
             ["N", "Add note"],
+            ["F", "Freehand"],
           ].map(([key, description]) => (
             <div className="guide-row" key={key}>
               <kbd>{key}</kbd>

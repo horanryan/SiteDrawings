@@ -5,6 +5,7 @@ export type DrawingTool =
   | "rectangle"
   | "circle"
   | "dimension"
+  | "freehand"
   | "note";
 
 export type ItemKind = Exclude<DrawingTool, "select">;
@@ -28,6 +29,7 @@ export interface DrawingItem {
   widthLabel?: string;
   heightLabel?: string;
   showDimension: boolean;
+  points?: Point[];
 }
 
 export interface DrawingFile {
@@ -156,6 +158,17 @@ export function itemLength(item: DrawingItem): number {
   return distance({ x: item.x, y: item.y }, { x: item.x2, y: item.y2 });
 }
 
+export function itemBounds(item: DrawingItem) {
+  if (item.kind === "circle") {
+    const radius = itemLength(item);
+    return { left: item.x - radius, top: item.y - radius, right: item.x + radius, bottom: item.y + radius };
+  }
+  const points = item.kind === "freehand" && item.points?.length
+    ? item.points.map((point) => ({ x: item.x + point.x, y: item.y + point.y }))
+    : [{ x: item.x, y: item.y }, { x: item.x2, y: item.y2 }];
+  return points.reduce((bounds, point) => ({ left: Math.min(bounds.left, point.x), top: Math.min(bounds.top, point.y), right: Math.max(bounds.right, point.x), bottom: Math.max(bounds.bottom, point.y) }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
+}
+
 function closestPointOnSegment(point: Point, start: Point, end: Point): Point {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
@@ -240,7 +253,7 @@ export function snapPoint(
   let closest: Point | undefined;
   let closestDistance = options.toleranceFeet;
   for (const item of items) {
-    if (item.id === ignoreId || item.kind === "note") continue;
+    if (item.id === ignoreId || item.kind === "note" || item.kind === "freehand") continue;
     for (const candidate of snapCandidates(item, result)) {
       const gap = distance(candidate, result);
       if (gap < closestDistance) {
@@ -296,7 +309,7 @@ export function isDrawingFile(value: unknown): value is DrawingFile {
       (item) =>
         item &&
         typeof item.id === "string" &&
-        ["wall", "dashed", "rectangle", "circle", "dimension", "note"].includes(
+        ["wall", "dashed", "rectangle", "circle", "dimension", "note", "freehand"].includes(
           item.kind,
         ) &&
         [item.x, item.y, item.x2, item.y2].every(
@@ -308,6 +321,7 @@ export function isDrawingFile(value: unknown): value is DrawingFile {
         typeof item.color === "string" &&
         /^#[\da-f]{6}$/i.test(item.color) &&
         typeof item.showDimension === "boolean" &&
+        (item.kind !== "freehand" || (Array.isArray(item.points) && item.points.length >= 2 && item.points.length <= 100000 && item.points.every((point: Point) => point && [point.x, point.y].every((coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate) && Math.abs(coordinate) <= 2_000_000)))) &&
         (item.label === undefined || typeof item.label === "string") &&
         (item.widthLabel === undefined || typeof item.widthLabel === "string") &&
         (item.heightLabel === undefined || typeof item.heightLabel === "string"),
