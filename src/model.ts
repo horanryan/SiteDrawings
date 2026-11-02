@@ -1,0 +1,316 @@
+export type DrawingTool =
+  | "select"
+  | "wall"
+  | "dashed"
+  | "rectangle"
+  | "circle"
+  | "dimension"
+  | "note";
+
+export type ItemKind = Exclude<DrawingTool, "select">;
+export type ShapeTool = Exclude<ItemKind, "note">;
+
+export interface Point {
+  x: number;
+  y: number;
+}
+
+// All saved positions and measurements use feet; grid spacing is a snapping preference.
+export interface DrawingItem {
+  id: string;
+  kind: ItemKind;
+  x: number;
+  y: number;
+  x2: number;
+  y2: number;
+  color: string;
+  label?: string;
+  widthLabel?: string;
+  heightLabel?: string;
+  showDimension: boolean;
+}
+
+export interface DrawingFile {
+  version: 1;
+  name: string;
+  gridFeet: number;
+  items: DrawingItem[];
+}
+
+export interface SnapOptions {
+  grid: boolean;
+  objects: boolean;
+  gridFeet: number;
+  toleranceFeet: number;
+}
+
+export interface SnapResult {
+  point: Point;
+  snapped: boolean;
+}
+
+const EIGHTH_INCHES = ["", "⅛", "¼", "⅜", "½", "⅝", "¾", "⅞"];
+
+let nextItemId = 0;
+
+function createItemId(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  // randomUUID is unavailable in non-secure contexts, such as a local HTTP
+  // server opened by IP address on an iPad. IDs only need to distinguish items.
+  nextItemId += 1;
+  return `item-${Date.now().toString(36)}-${nextItemId.toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+export function newItem(
+  kind: ItemKind,
+  start: Point,
+  end: Point,
+): DrawingItem {
+  return {
+    id: createItemId(),
+    kind,
+    x: start.x,
+    y: start.y,
+    x2: end.x,
+    y2: end.y,
+    color: kind === "dashed" ? "#718196" : "#30465c",
+    showDimension: true,
+  };
+}
+
+export function distance(start: Point, end: Point): number {
+  return Math.hypot(end.x - start.x, end.y - start.y);
+}
+
+export function formatFeetInches(feetValue: number): string {
+  const sign = feetValue < 0 ? "−" : "";
+  const eighths = Math.round(Math.abs(feetValue) * 96);
+  const feet = Math.floor(eighths / 96);
+  const remaining = eighths % 96;
+  const inches = Math.floor(remaining / 8);
+  const fraction = EIGHTH_INCHES[remaining % 8];
+  return `${sign}${feet}′ ${inches}${fraction}″`;
+}
+
+export function parseFeetInches(value: string): number | null {
+  const fractions: Record<string, number> = {
+    "⅛": 0.125,
+    "¼": 0.25,
+    "⅜": 0.375,
+    "½": 0.5,
+    "⅝": 0.625,
+    "¾": 0.75,
+    "⅞": 0.875,
+  };
+  const text = value
+    .trim()
+    .toLowerCase()
+    .replace(/[′’]/g, "'")
+    .replace(/[″“”]/g, '"')
+    .replace(/(\d*)([⅛¼⅜½⅝¾⅞])/g, (_, whole: string, fraction: string) =>
+      String(Number(whole || 0) + fractions[fraction]),
+    );
+  if (!text) return null;
+
+  const decimalFeet = Number(text);
+  if (Number.isFinite(decimalFeet)) return decimalFeet;
+
+  const feetAndInches = text.match(
+    /^(\d+(?:\.\d+)?)\s*(?:'|ft|feet)\s*(?:(\d+(?:\.\d+)?)(?:\s+(\d+)\s*\/\s*(\d+))?\s*(?:"|in|inches)?)?$/,
+  );
+  if (feetAndInches) {
+    const feet = Number(feetAndInches[1]);
+    const inches = Number(feetAndInches[2] || 0);
+    const denominator = Number(feetAndInches[4]);
+    if (feetAndInches[3] && denominator === 0) return null;
+    const fraction = feetAndInches[3] ? Number(feetAndInches[3]) / denominator : 0;
+    return feet + (inches + fraction) / 12;
+  }
+
+  const fractionalInches = text.match(
+    /^(\d+)\s*\/\s*(\d+)\s*(?:"|in|inches)$/,
+  );
+  if (fractionalInches) {
+    const denominator = Number(fractionalInches[2]);
+    if (denominator === 0) return null;
+    return Number(fractionalInches[1]) / denominator / 12;
+  }
+
+  const inchesOnly = text.match(
+    /^(\d+(?:\.\d+)?)(?:\s+(\d+)\s*\/\s*(\d+))?\s*(?:"|in|inches)$/,
+  );
+  if (inchesOnly) {
+    const inches = Number(inchesOnly[1]);
+    const denominator = Number(inchesOnly[3]);
+    if (inchesOnly[2] && denominator === 0) return null;
+    const fraction = inchesOnly[2] ? Number(inchesOnly[2]) / denominator : 0;
+    return (inches + fraction) / 12;
+  }
+
+  return null;
+}
+
+export function itemLength(item: DrawingItem): number {
+  return distance({ x: item.x, y: item.y }, { x: item.x2, y: item.y2 });
+}
+
+function closestPointOnSegment(point: Point, start: Point, end: Point): Point {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) return start;
+
+  // Clamp the projection so a snap lands on the segment, not its infinite line.
+  const position = Math.max(
+    0,
+    Math.min(
+      1,
+      ((point.x - start.x) * dx + (point.y - start.y) * dy) /
+        lengthSquared,
+    ),
+  );
+  return { x: start.x + position * dx, y: start.y + position * dy };
+}
+
+function snapCandidates(item: DrawingItem, point: Point): Point[] {
+  const start = { x: item.x, y: item.y };
+  const end = { x: item.x2, y: item.y2 };
+
+  if (item.kind === "circle") {
+    const radius = distance(start, end);
+    const angle = Math.atan2(point.y - start.y, point.x - start.x);
+    return [
+      start,
+      {
+        x: start.x + Math.cos(angle) * radius,
+        y: start.y + Math.sin(angle) * radius,
+      },
+    ];
+  }
+
+  if (item.kind === "rectangle") {
+    const left = Math.min(start.x, end.x);
+    const right = Math.max(start.x, end.x);
+    const top = Math.min(start.y, end.y);
+    const bottom = Math.max(start.y, end.y);
+    const corners = [
+      { x: left, y: top },
+      { x: right, y: top },
+      { x: right, y: bottom },
+      { x: left, y: bottom },
+    ];
+    const edges = corners.map((corner, index) =>
+      closestPointOnSegment(point, corner, corners[(index + 1) % corners.length]),
+    );
+
+    return [
+      ...corners,
+      { x: (left + right) / 2, y: (top + bottom) / 2 },
+      ...edges,
+    ];
+  }
+
+  return [
+    start,
+    end,
+    { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 },
+    closestPointOnSegment(point, start, end),
+  ];
+}
+
+export function snapPoint(
+  point: Point,
+  items: DrawingItem[],
+  options: SnapOptions,
+  ignoreId?: string,
+): SnapResult {
+  // Geometry stays in real feet; grid spacing only controls where a new point lands.
+  let result = { ...point };
+
+  if (options.grid && options.gridFeet > 0) {
+    result = {
+      x: Math.round(result.x / options.gridFeet) * options.gridFeet,
+      y: Math.round(result.y / options.gridFeet) * options.gridFeet,
+    };
+  }
+  if (!options.objects) return { point: result, snapped: false };
+
+  let closest: Point | undefined;
+  let closestDistance = options.toleranceFeet;
+  for (const item of items) {
+    if (item.id === ignoreId || item.kind === "note") continue;
+    for (const candidate of snapCandidates(item, result)) {
+      const gap = distance(candidate, result);
+      if (gap < closestDistance) {
+        closest = candidate;
+        closestDistance = gap;
+      }
+    }
+  }
+
+  return closest
+    ? { point: closest, snapped: true }
+    : { point: result, snapped: false };
+}
+
+export function resizeLine(item: DrawingItem, lengthFeet: number): DrawingItem {
+  const currentLength = itemLength(item);
+  const direction = currentLength === 0 ? { x: 1, y: 0 } : {
+    x: (item.x2 - item.x) / currentLength,
+    y: (item.y2 - item.y) / currentLength,
+  };
+
+  return {
+    ...item,
+    x2: item.x + direction.x * lengthFeet,
+    y2: item.y + direction.y * lengthFeet,
+  };
+}
+
+export function moveItem(item: DrawingItem, dx: number, dy: number): DrawingItem {
+  return {
+    ...item,
+    x: item.x + dx,
+    y: item.y + dy,
+    x2: item.x2 + dx,
+    y2: item.y2 + dy,
+  };
+}
+
+export function isDrawingFile(value: unknown): value is DrawingFile {
+  if (!value || typeof value !== "object") return false;
+  const file = value as Partial<DrawingFile>;
+  return (
+    file.version === 1 &&
+    typeof file.name === "string" &&
+    file.name.length <= 80 &&
+    typeof file.gridFeet === "number" &&
+    Number.isFinite(file.gridFeet) &&
+    file.gridFeet >= 0.125 &&
+    file.gridFeet <= 1000 &&
+    Array.isArray(file.items) &&
+    file.items.length <= 5000 &&
+    file.items.every(
+      (item) =>
+        item &&
+        typeof item.id === "string" &&
+        ["wall", "dashed", "rectangle", "circle", "dimension", "note"].includes(
+          item.kind,
+        ) &&
+        [item.x, item.y, item.x2, item.y2].every(
+          (coordinate) =>
+            typeof coordinate === "number" &&
+            Number.isFinite(coordinate) &&
+            Math.abs(coordinate) <= 1_000_000,
+        ) &&
+        typeof item.color === "string" &&
+        /^#[\da-f]{6}$/i.test(item.color) &&
+        typeof item.showDimension === "boolean" &&
+        (item.label === undefined || typeof item.label === "string") &&
+        (item.widthLabel === undefined || typeof item.widthLabel === "string") &&
+        (item.heightLabel === undefined || typeof item.heightLabel === "string"),
+    )
+  );
+}
