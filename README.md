@@ -19,6 +19,7 @@ Open the local URL printed by Vite. Create a production build with `npm run buil
 - Editable line lengths in decimal feet or feet-and-inches notation; changing a measurement updates the geometry
 - Line and dashed-line tools stay active after each segment, so consecutive segments connect at their shared endpoints
 - Select and move, undo/redo, zoom/pan, autosave, PDF/SVG/PNG export, and JSON import/export
+- PDF exports use landscape letter pages and fit the whole drawing without changing its proportions
 - Use the scale setting to choose how far apart the snap grid squares are
 - On iPad, drag with a finger or Apple Pencil to draw. In Select mode, drag an item to move it or drag the background to pan. Use two fingers to pan and pinch-zoom.
 

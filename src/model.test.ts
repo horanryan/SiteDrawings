@@ -105,6 +105,13 @@ describe("drawing file validation", () => {
     }
   });
 
+  it("uses landscape PDF pages even for tall drawings", async () => {
+    const pdf = jpegAsPdf(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), 50, 100);
+    const text = new TextDecoder("latin1").decode(await pdf.arrayBuffer());
+    expect(text).toContain("/MediaBox [0 0 792 612]");
+    expect(text).toContain("270.000 0 0 540.000 261.000 36.000 cm");
+  });
+
   it("accepts a saved drawing and rejects malformed geometry", () => {
     const file: DrawingFile = {
       version: 1,

@@ -1,11 +1,10 @@
 import type { DrawingFile } from "../model";
 import { drawingAsSvg } from "./drawingFiles";
 
-// Embed a rasterized plan on a letter-sized PDF page, preserving its aspect ratio.
+// Embed a rasterized plan on a landscape letter page, preserving its aspect ratio.
 export function jpegAsPdf(jpeg: Uint8Array, width: number, height: number): Blob {
-  const landscape = width > height;
-  const pageWidth = landscape ? 792 : 612;
-  const pageHeight = landscape ? 612 : 792;
+  const pageWidth = 792;
+  const pageHeight = 612;
   const scale = Math.min((pageWidth - 72) / width, (pageHeight - 72) / height);
   const imageWidth = width * scale;
   const imageHeight = height * scale;
