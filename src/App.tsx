@@ -15,7 +15,6 @@ import {
   Redo2,
   Ruler,
   Save,
-  Shapes,
   Square,
   Type,
   Undo2,
@@ -23,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import Inspector from "./components/Inspector";
+import logo from "./assets/rh-red.svg";
 import PlanCanvas, { DEFAULT_CAMERA } from "./components/PlanCanvas";
 import { isDrawingFile, itemBounds, updateSelection } from "./model";
 import { drawingAsPdf } from "./io/drawingPdf";
@@ -432,7 +432,7 @@ function App() {
     <div className="app-shell">
       <header className="topbar">
         <a className="brand" href="#" aria-label="SiteSketch home">
-          <span className="brand-mark"><Shapes size={22} strokeWidth={1.8} /></span>
+          <span className="brand-mark"><img src={logo} alt="" /></span>
           <span className="brand-copy">
             <strong>SiteSketch</strong>
             <small>CONSTRUCTION PLAN STUDIO</small>
@@ -570,6 +570,7 @@ function App() {
             <span className="status-indicator"><i />{saveMessage}</span>
             <span className="status-coordinates" ref={coordinatesRef}>X —  ·  Y —</span>
             <span className="status-help">Hold <kbd>Space</kbd> and drag to pan <span className="status-dot">·</span> Scroll to zoom</span>
+            <span className="status-copyright">© 2026 Ryan Horan</span>
           </footer>
         </main>
 

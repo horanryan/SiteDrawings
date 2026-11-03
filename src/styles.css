@@ -33,7 +33,8 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgb(47 123 191 / 
 .app-shell { display: flex; flex-direction: column; width: 100vw; height: 100vh; height: 100dvh; min-height: min(560px, 100dvh); overflow: hidden; }
 .topbar { z-index: 3; display: flex; flex: 0 0 calc(64px + env(safe-area-inset-top)); align-items: center; gap: 25px; padding: env(safe-area-inset-top) max(22px, env(safe-area-inset-right)) 0 max(22px, env(safe-area-inset-left)); background: var(--paper); border-bottom: 1px solid var(--line); }
 .brand { display: flex; flex: 0 0 210px; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; }
-.brand-mark { display: grid; width: 35px; height: 35px; place-items: center; color: white; border-radius: 10px; background: linear-gradient(145deg, #337db9, #235c99); box-shadow: 0 3px 8px rgb(38 101 159 / 25%); }
+.brand-mark { display: grid; width: 44px; height: 44px; flex: 0 0 44px; place-items: center; }
+.brand-mark img { display: block; width: 60px; height: 60px; max-width: none; }
 .brand-copy { display: flex; flex-direction: column; gap: 1px; }
 .brand-copy strong { font: 800 17px/1.1 "Manrope", sans-serif; letter-spacing: -.5px; }
 .brand-copy small { color: #8c9aaa; font-size: 8px; font-weight: 700; letter-spacing: 1.2px; }
@@ -101,6 +102,8 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgb(47 123 191 / 
 .status-indicator i, .save-dot { width: 6px; height: 6px; border-radius: 50%; background: #55b285; }
 .status-coordinates { color: #6d8194; font-variant-numeric: tabular-nums; }
 .status-help { margin-left: auto; }
+.status-copyright { margin-left: auto; white-space: nowrap; }
+.status-help + .status-copyright { margin-left: 0; }
 .status-dot { margin: 0 4px; }
 kbd { display: inline-block; padding: 1px 4px; color: #64778a; border: 1px solid #e0e6ec; border-radius: 3px; background: #f9fafb; font: 9px "DM Sans", sans-serif; }
 

@@ -35,3 +35,7 @@ Plans are stored in each browser on each device, not on GitHub or shared between
 - On iPad, drag with a finger or Apple Pencil to draw. In Select mode, drag an item to move it or drag the background to pan. Use two fingers to pan and pinch-zoom.
 
 The canvas uses pointer events and reserves the browser safe areas for iPad layouts. Test Apple Pencil behavior on the target iPad and iPadOS version before relying on it in production; desktop browser checks cannot certify device-specific stylus and palm-rejection behavior.
+
+## Copyright and usage
+
+© 2026 Ryan Horan. All rights reserved. See [COPYRIGHT.md](COPYRIGHT.md) for usage details.
