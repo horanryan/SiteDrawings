@@ -8,6 +8,7 @@ import {
   itemLength,
   itemIntersectsSelection,
   lineSections,
+  layoutLineLabels,
   hasFullDimension,
   moveItem,
   moveJoint,
@@ -128,7 +129,7 @@ function Label({
   );
 }
 
-function LineDrawing({ item, items = [], showOverallDimensions = false }: { item: DrawingItem; items?: DrawingItem[]; showOverallDimensions?: boolean }) {
+function LineDrawing({ item, items = [], showOverallDimensions = false, labelPositions }: { item: DrawingItem; items?: DrawingItem[]; showOverallDimensions?: boolean; labelPositions?: Point[] }) {
   const dx = item.x2 - item.x;
   const dy = item.y2 - item.y;
   const length = itemLength(item) || 1;
@@ -158,14 +159,14 @@ function LineDrawing({ item, items = [], showOverallDimensions = false }: { item
       />
       {item.showDimension && !divided && (
         <Label
-          x={labelX}
-          y={labelY}
+          x={labelPositions?.[0] ? labelPositions[0].x - item.x : labelX}
+          y={labelPositions?.[0] ? labelPositions[0].y - item.y : labelY}
           text={dimensionText(item, formatFeetInches(length))}
         />
       )}
       {item.showDimension && divided && sections.map((section, index) => {
         const midpoint = (section.start + section.end) / 2;
-        return <Label key={index} x={dx * midpoint + dy / length * offset} y={dy * midpoint - dx / length * offset} text={formatFeetInches(section.length)} />;
+        return <Label key={index} x={labelPositions?.[index] ? labelPositions[index].x - item.x : dx * midpoint + dy / length * offset} y={labelPositions?.[index] ? labelPositions[index].y - item.y : dy * midpoint - dx / length * offset} text={formatFeetInches(section.length)} />;
       })}
       {item.showDimension && divided && showOverallDimensions && !hasFullDimension(item, items) && (
         <DimensionDrawing item={{ ...item, kind: "dimension" }} />
@@ -304,6 +305,7 @@ const DrawingShape = memo(function DrawingShape({
   objectSnap,
   showDimensions,
   showOverallDimensions,
+  labelPositions,
   items,
   camera,
   selectItem,
@@ -317,6 +319,7 @@ const DrawingShape = memo(function DrawingShape({
   objectSnap: boolean;
   showDimensions: boolean;
   showOverallDimensions: boolean;
+  labelPositions?: Point[];
   items: DrawingItem[];
   camera: Camera;
   selectItem: (id: string, additive?: boolean) => void;
@@ -363,7 +366,7 @@ const DrawingShape = memo(function DrawingShape({
       {item.kind === "freehand" ? (
         <FreehandDrawing item={item} />
       ) : item.kind === "wall" || item.kind === "dashed" ? (
-        <LineDrawing item={{ ...item, showDimension: showDimensions && item.showDimension }} items={items} showOverallDimensions={showOverallDimensions} />
+        <LineDrawing item={{ ...item, showDimension: showDimensions && item.showDimension }} items={items} showOverallDimensions={showOverallDimensions} labelPositions={labelPositions} />
       ) : item.kind === "rectangle" ? (
         <RectangleDrawing item={{ ...item, showDimension: showDimensions && item.showDimension }} />
       ) : item.kind === "circle" ? (
@@ -519,6 +522,7 @@ export default function PlanCanvas({
   const pixelsPerFoot = PIXELS_PER_FOOT * camera.zoom;
   const selectedLine = selectedIds.length === 1 ? items.find((item) => item.id === selectedIds[0] && (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension")) : undefined;
   const displayedItems = endpointPreview ?? items;
+  const lineLabelPositions = useMemo(() => layoutLineLabels(displayedItems, showOverallDimensions), [displayedItems, showOverallDimensions]);
 
   useEffect(() => {
     setEndpointPreview(null);
@@ -827,6 +831,7 @@ export default function PlanCanvas({
               objectSnap={objectSnap}
               showDimensions={showDimensions}
               showOverallDimensions={showOverallDimensions}
+              labelPositions={lineLabelPositions.get(item.id)}
               items={displayedItems}
               camera={camera}
               selectItem={onSelect}
@@ -849,7 +854,7 @@ export default function PlanCanvas({
             </Group>
           )}
           {selectionBox && <Rect x={Math.min(selectionBox.start.x, selectionBox.current.x)} y={Math.min(selectionBox.start.y, selectionBox.current.y)} width={Math.abs(selectionBox.current.x - selectionBox.start.x)} height={Math.abs(selectionBox.current.y - selectionBox.start.y)} fill="rgba(59, 145, 206, 0.12)" stroke="#3b91ce" strokeWidth={1 / pixelsPerFoot} dash={[5 / pixelsPerFoot, 4 / pixelsPerFoot]} listening={false} />}
-          {selectedLine && (["start", "end"] as const).map((endpoint) => {
+          {activeTool === "select" && selectedLine && (["start", "end"] as const).map((endpoint) => {
             const shown = displayedItems.find((item) => item.id === selectedLine.id) ?? selectedLine;
             return <Circle key={`${selectedLine.id}-${endpoint}`} x={endpoint === "start" ? shown.x : shown.x2} y={endpoint === "start" ? shown.y : shown.y2} radius={6 / pixelsPerFoot} hitStrokeWidth={16 / pixelsPerFoot} fill="white" stroke="#287bc0" strokeWidth={2 / pixelsPerFoot} draggable
               onPointerDown={(event) => { event.cancelBubble = true; }}

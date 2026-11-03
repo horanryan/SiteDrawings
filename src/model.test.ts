@@ -5,6 +5,7 @@ import {
   itemBounds,
   itemIntersectsSelection,
   lineSections,
+  layoutLineLabels,
   hasFullDimension,
   moveItem,
   moveLineEndpoint,
@@ -111,6 +112,20 @@ describe("plan measurements", () => {
 });
 
 describe("plan snapping", () => {
+  it("separates nearby line labels without moving the geometry", () => {
+    const bottom = newItem("wall", { x: 0, y: 0 }, { x: 5, y: 0 });
+    const diagonal = newItem("wall", { x: 0, y: 0 }, { x: 5, y: -1 });
+    const labels = layoutLineLabels([bottom, diagonal]);
+    const first = labels.get(bottom.id)![0], second = labels.get(diagonal.id)![0];
+    const firstWidth = Math.max(0.8, formatFeetInches(5).length * 0.1 + 0.2);
+    const secondWidth = Math.max(0.8, formatFeetInches(Math.sqrt(26)).length * 0.1 + 0.2);
+    expect(Math.abs(first.x - second.x) >= (firstWidth + secondWidth) / 2 + 0.04 || Math.abs(first.y - second.y) >= 0.3 - 1e-9).toBe(true);
+    expect(bottom.y2).toBe(0);
+    expect(diagonal.y2).toBe(-1);
+    const svg = drawingAsSvg({ version: 1, name: "Plan", gridFeet: 1, items: [bottom, diagonal] });
+    expect(svg).toContain(`x="${first.x * 72}" y="${first.y * 72 + 4}"`);
+    expect(svg).toContain(`x="${second.x * 72}" y="${second.y * 72 + 4}"`);
+  });
   const noGrid = {
     grid: false,
     objects: true,

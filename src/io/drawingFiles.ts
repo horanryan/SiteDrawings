@@ -1,5 +1,5 @@
-import { formatFeetInches, itemBounds, lineSections, hasFullDimension } from "../model";
-import type { DrawingFile, DrawingItem } from "../model";
+import { formatFeetInches, itemBounds, lineSections, hasFullDimension, layoutLineLabels } from "../model";
+import type { DrawingFile, DrawingItem, Point } from "../model";
 
 const EXPORT_SCALE = 72;
 
@@ -25,7 +25,7 @@ function dimensionLabel(text: string, x: number, y: number) {
     </g>`;
 }
 
-function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDimensions = false): string {
+function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDimensions = false, positions?: Map<string, Point[]>): string {
   const scale = EXPORT_SCALE;
   const x = item.x * scale;
   const y = item.y * scale;
@@ -46,15 +46,17 @@ function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDim
     if (!item.showDimension) return line;
     const sections = lineSections(item, items);
     if (sections.length > 1) {
-      const labels = sections.map((section) => {
+      const labels = sections.map((section, index) => {
         const midpoint = (section.start + section.end) / 2;
-        return dimensionLabel(formatFeetInches(section.length), x + dx * midpoint + dy / length * 22, y + dy * midpoint - dx / length * 22);
+        const position = positions?.get(item.id)?.[index];
+        return dimensionLabel(formatFeetInches(section.length), position ? position.x * scale : x + dx * midpoint + dy / length * 22, position ? position.y * scale : y + dy * midpoint - dx / length * 22);
       }).join("");
       const full = !showOverallDimensions || hasFullDimension(item, items) ? "" : renderItem({ ...item, kind: "dimension" });
       return `${line}${labels}${full}`;
     }
-    const labelX = (x + x2) / 2 - (dy / length) * 22;
-    const labelY = (y + y2) / 2 + (dx / length) * 22;
+    const position = positions?.get(item.id)?.[0];
+    const labelX = position ? position.x * scale : (x + x2) / 2 - (dy / length) * 22;
+    const labelY = position ? position.y * scale : (y + y2) / 2 + (dx / length) * 22;
     const label = item.label?.trim() || formatFeetInches(length / scale);
     return `${line}${dimensionLabel(label, labelX, labelY)}`;
   }
@@ -80,7 +82,7 @@ function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDim
   }
 
   if (item.kind === "dimension") {
-    const offset = 27;
+    const offset = 0.38 * scale;
     const nx = (-dy / length) * offset;
     const ny = (dx / length) * offset;
     const startX = x + nx;
@@ -93,7 +95,7 @@ function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDim
       <line x1="${startX}" y1="${startY}" x2="${endX}" y2="${endY}" stroke="#6f8295" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)"/>`;
     if (!item.showDimension) return lines;
     const label = item.label?.trim() || formatFeetInches(length / scale);
-    return `${lines}${dimensionLabel(label, (startX + endX) / 2, (startY + endY) / 2 - 18)}`;
+    return `${lines}${dimensionLabel(label, (startX + endX) / 2, (startY + endY) / 2 - 0.16 * scale)}`;
   }
 
   return `<text x="${x}" y="${y}" fill="${color}" font-family="Arial,sans-serif" font-size="18" font-weight="600">${xml(item.label || "Note")}</text>`;
@@ -102,6 +104,10 @@ function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDim
 export function drawingAsSvg(file: DrawingFile, showOverallDimensions = false): string {
   // Export bounds include a little breathing room so labels at the edges aren't clipped.
   const bounds = file.items.map(itemBounds);
+  const positions = layoutLineLabels(file.items, showOverallDimensions);
+  for (const labels of positions.values()) {
+    for (const point of labels) bounds.push({ left: point.x, top: point.y, right: point.x, bottom: point.y });
+  }
   const padding = 1.2 * EXPORT_SCALE;
   const left = bounds.length ? Math.min(...bounds.map((bound) => bound.left * EXPORT_SCALE)) - padding : 0;
   const top = bounds.length ? Math.min(...bounds.map((bound) => bound.top * EXPORT_SCALE)) - padding : 0;
@@ -118,7 +124,7 @@ export function drawingAsSvg(file: DrawingFile, showOverallDimensions = false): 
     <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0 0 L8 4 L0 8 Z" fill="#6f8295"/></marker>
   </defs>
   <rect x="${left}" y="${top}" width="${width}" height="${height}" fill="#fff"/>
-  ${file.items.map((item) => renderItem(item, file.items, showOverallDimensions)).join("\n")}
+  ${file.items.map((item) => renderItem(item, file.items, showOverallDimensions, positions)).join("\n")}
 </svg>`;
 }
 

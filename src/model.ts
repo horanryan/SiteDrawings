@@ -247,6 +247,47 @@ export function hasFullDimension(item: DrawingItem, items: DrawingItem[]): boole
   return items.some((other) => other.kind === "dimension" && ((distance(a, { x: other.x, y: other.y }) < 1e-6 && distance(b, { x: other.x2, y: other.y2 }) < 1e-6) || (distance(b, { x: other.x, y: other.y }) < 1e-6 && distance(a, { x: other.x2, y: other.y2 }) < 1e-6)));
 }
 
+// Place line labels in plan coordinates so canvas and exports share the layout.
+export function layoutLineLabels(items: DrawingItem[], showOverallDimensions = false): Map<string, Point[]> {
+  const positions = new Map<string, Point[]>();
+  const occupied: Array<{ x: number; y: number; width: number; height: number }> = [];
+  const reserve = (point: Point, text: string) => occupied.push({ ...point, width: Math.max(0.8, text.length * 0.1 + 0.2), height: 0.26 });
+  for (const item of items) {
+    if (!item.showDimension) continue;
+    const overall = (item.kind === "wall" || item.kind === "dashed") && showOverallDimensions && lineSections(item, items).length > 1 && !hasFullDimension(item, items);
+    if (item.kind !== "dimension" && !overall) continue;
+    const dx = item.x2 - item.x, dy = item.y2 - item.y, length = Math.hypot(dx, dy) || 1;
+    reserve({ x: (item.x + item.x2) / 2 - dy / length * 0.38, y: (item.y + item.y2) / 2 + dx / length * 0.38 - 0.16 }, item.label?.trim() || formatFeetInches(length));
+  }
+  for (const item of items) {
+    if (!item.showDimension || (item.kind !== "wall" && item.kind !== "dashed")) continue;
+    const dx = item.x2 - item.x, dy = item.y2 - item.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 1e-9) continue;
+    const sections = lineSections(item, items);
+    const divided = sections.length > 1;
+    const labels = (divided ? sections : [{ start: 0, end: 1, length }]).map((section) => {
+      const midpoint = (section.start + section.end) / 2;
+      const text = divided ? formatFeetInches(section.length) : item.label?.trim() || formatFeetInches(length);
+      const width = Math.max(0.8, text.length * 0.1 + 0.2);
+      const side = divided ? -1 : 1;
+      let point = { x: item.x + dx * midpoint - dy / length * 0.34 * side, y: item.y + dy * midpoint + dx / length * 0.34 * side };
+      for (let step = 0; step < 40; step++) {
+        const offset = (0.34 + Math.floor(step / 2) * 0.3) * (step % 2 ? -side : side);
+        const candidate = { x: item.x + dx * midpoint - dy / length * offset, y: item.y + dy * midpoint + dx / length * offset };
+        if (occupied.every((box) => Math.abs(candidate.x - box.x) >= (width + box.width) / 2 + 0.04 || Math.abs(candidate.y - box.y) >= (0.26 + box.height) / 2 + 0.04)) {
+          point = candidate;
+          break;
+        }
+      }
+      reserve(point, text);
+      return point;
+    });
+    positions.set(item.id, labels);
+  }
+  return positions;
+}
+
 function closestPointOnSegment(point: Point, start: Point, end: Point): Point {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
