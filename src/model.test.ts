@@ -14,6 +14,7 @@ import {
   newItem,
   parseFeetInches,
   resizeLine,
+  rectangleAsLines,
   snapPoint,
   updateSelection,
 } from "./model";
@@ -22,6 +23,22 @@ import { drawingAsSvg } from "./io/drawingFiles";
 import { jpegAsPdf } from "./io/drawingPdf";
 
 describe("plan measurements", () => {
+  it("creates four independent connected lines from a rectangle drawn in either direction", () => {
+    for (const [start, end] of [[{ x: 1, y: 2 }, { x: 6, y: 5 }], [{ x: 6, y: 5 }, { x: 1, y: 2 }]]) {
+      const rectangle = { ...newItem("rectangle", start, end), color: "#123456", showDimension: false };
+      const lines = rectangleAsLines(rectangle);
+      expect(lines).toHaveLength(4);
+      expect(new Set(lines.map((line) => line.id)).size).toBe(4);
+      expect(lines.map((line) => line.kind)).toEqual(["wall", "wall", "wall", "wall"]);
+      expect(lines.map((line) => Math.hypot(line.x2 - line.x, line.y2 - line.y))).toEqual([5, 3, 5, 3]);
+      for (let index = 0; index < lines.length; index++) {
+        expect([lines[index].x2, lines[index].y2]).toEqual([lines[(index + 1) % 4].x, lines[(index + 1) % 4].y]);
+        expect(lines[index].color).toBe("#123456");
+        expect(lines[index].showDimension).toBe(false);
+      }
+    }
+    expect(rectangleAsLines(newItem("rectangle", { x: 1, y: 2 }, { x: 1, y: 5 }))).toEqual([]);
+  });
   it("selects lines intersecting a dragged box in either direction", () => {
     const from = { x: 2, y: 2 }, to = { x: 4, y: 4 };
     const crossing = newItem("wall", { x: 0, y: 3 }, { x: 6, y: 3 });

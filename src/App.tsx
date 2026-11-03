@@ -24,7 +24,7 @@ import {
 import Inspector from "./components/Inspector";
 import logo from "./assets/rh-red.svg";
 import PlanCanvas, { DEFAULT_CAMERA } from "./components/PlanCanvas";
-import { isDrawingFile, itemBounds, updateSelection } from "./model";
+import { isDrawingFile, itemBounds, rectangleAsLines, updateSelection } from "./model";
 import { drawingAsPdf } from "./io/drawingPdf";
 import type { DrawingFile, DrawingItem, DrawingTool, Point } from "./model";
 import {
@@ -287,9 +287,14 @@ function App() {
   }
 
   function createItem(item: DrawingItem) {
-    const next = [...itemsRef.current, item];
+    const created = item.kind === "rectangle" ? rectangleAsLines(item) : [item];
+    if (!created.length) {
+      showToast("Draw a rectangle with both width and height.");
+      return;
+    }
+    const next = [...itemsRef.current, ...created];
     commitItems(next);
-    setSelectedIds([item.id]);
+    setSelectedIds(created.length === 1 ? [created[0].id] : []);
   }
 
   function updateItem(updated: DrawingItem) {
@@ -499,7 +504,7 @@ function App() {
               />
             ))}
           </div>
-          <div className="rail-bottom">
+          <div className="rail-bottom" hidden>
             <button
               className="tool-button help-tool"
               title="One Click Contractors setup"

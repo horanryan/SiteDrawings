@@ -182,10 +182,6 @@ function FreehandDrawing({ item }: { item: DrawingItem }) {
 
 function RectangleDrawing({ item }: { item: DrawingItem }) {
   const rect = normalizedRect(item);
-  const verticalOffset = rect.width / 2 + 0.26;
-  const sideOffset = rect.height / 2 + 0.25;
-  const dx = item.x2 - item.x;
-  const dy = item.y2 - item.y;
   return (
     <>
       <Rect
@@ -204,13 +200,13 @@ function RectangleDrawing({ item }: { item: DrawingItem }) {
       {item.showDimension && rect.width > 0 && rect.height > 0 && (
         <>
           <Label
-            x={dx / 2}
-            y={dy >= 0 ? -verticalOffset : verticalOffset}
+            x={rect.x + rect.width / 2}
+            y={rect.y - 0.3}
             text={item.widthLabel?.trim() || formatFeetInches(rect.width)}
           />
           <Label
-            x={dx >= 0 ? rect.width + sideOffset : -sideOffset}
-            y={dy / 2}
+            x={rect.x + rect.width + 0.3}
+            y={rect.y + rect.height / 2}
             text={item.heightLabel?.trim() || formatFeetInches(rect.height)}
             rotation={-90}
           />

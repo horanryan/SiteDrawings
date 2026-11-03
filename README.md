@@ -20,6 +20,7 @@ Plans are stored in each browser on each device, not on GitHub or shared between
 ## Drawing tools
 
 - Lines, dashed lines, rectangles, circles, dimension lines, and notes
+- New rectangles become four separately selectable lines; undo removes the entire newly drawn rectangle in one step. Existing saved rectangles remain editable as rectangles.
 - Freehand strokes with a finger, Apple Pencil, or mouse; select a stroke to move, recolor, or delete it
 - Grid snapping and snapping to nearby linework, corners, and circle edges
 - Object snap takes priority near linework, even with grid snap enabled. Connected endpoints and crossings divide displayed line measurements into sections; use Overall dimensions to show the full lengths too.

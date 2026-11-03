@@ -121,6 +121,14 @@ export function newItem(
   };
 }
 
+export function rectangleAsLines(rectangle: DrawingItem): DrawingItem[] {
+  const left = Math.min(rectangle.x, rectangle.x2), right = Math.max(rectangle.x, rectangle.x2);
+  const top = Math.min(rectangle.y, rectangle.y2), bottom = Math.max(rectangle.y, rectangle.y2);
+  if (right - left <= 0.001 || bottom - top <= 0.001) return [];
+  const corners = [{ x: left, y: top }, { x: right, y: top }, { x: right, y: bottom }, { x: left, y: bottom }];
+  return corners.map((start, index) => ({ ...newItem("wall", start, corners[(index + 1) % corners.length]), color: rectangle.color, showDimension: rectangle.showDimension }));
+}
+
 export function distance(start: Point, end: Point): number {
   return Math.hypot(end.x - start.x, end.y - start.y);
 }
