@@ -309,7 +309,7 @@ export default function Inspector({
             </div>
           ))}
           <p className="field-help guide-tip">
-            Draw connected line segments by continuing from the last endpoint. Switch tools to start elsewhere.
+            Start each line where you press. Use object snap to connect to existing linework.
           </p>
         </section>
       </div>

@@ -494,12 +494,7 @@ export default function PlanCanvas({
   const pinchRef = useRef<PinchGesture | null>(null);
   const touchPointsRef = useRef(new Map<number, Point>());
   const penPointersRef = useRef(new Set<number>());
-  const chainRef = useRef<{ kind: "wall" | "dashed"; itemId: string } | null>(null);
   const pixelsPerFoot = PIXELS_PER_FOOT * camera.zoom;
-
-  useEffect(() => {
-    chainRef.current = null;
-  }, [activeTool]);
 
   useEffect(() => {
     if (!hostRef.current) return undefined;
@@ -625,12 +620,7 @@ export default function PlanCanvas({
       return;
     }
     if (activeTool !== "select") {
-      const previousLine = chainRef.current?.kind === activeTool
-        ? items.find((item) => item.id === chainRef.current?.itemId)
-        : undefined;
-      const start = activeTool === "freehand" ? point : previousLine
-        ? { x: previousLine.x2, y: previousLine.y2 }
-        : snap(point).point;
+      const start = activeTool === "freehand" ? point : snap(point).point;
       const nextGesture = { kind: activeTool, start, current: start, pointerId: event.pointerId, points: activeTool === "freehand" ? [{ x: 0, y: 0 }] : undefined };
       gestureRef.current = nextGesture;
       setGesture(nextGesture);
@@ -712,9 +702,6 @@ export default function PlanCanvas({
       const item = newItem(currentGesture.kind, currentGesture.start, currentGesture.current);
       if (currentGesture.points) item.points = currentGesture.points;
       onCreate(item);
-      chainRef.current = item.kind === "wall" || item.kind === "dashed"
-        ? { kind: item.kind, itemId: item.id }
-        : null;
     }
     gestureRef.current = null;
     setGesture(null);

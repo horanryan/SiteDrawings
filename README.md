@@ -23,7 +23,7 @@ Plans are stored in each browser on each device, not on GitHub or shared between
 - Freehand strokes with a finger, Apple Pencil, or mouse; select a stroke to move, recolor, or delete it
 - Grid snapping and snapping to nearby linework, corners, and circle edges
 - Editable line lengths in decimal feet or feet-and-inches notation; changing a measurement updates the geometry
-- Line and dashed-line tools stay active after each segment, so consecutive segments connect at their shared endpoints
+- Line and dashed-line tools stay active after each segment; start the next line where you press, with object snap available to connect to existing linework
 - Select and move, undo/redo, zoom/pan, autosave, PDF/SVG/PNG export, and JSON import/export
 - PDF exports use landscape letter pages and fit the whole drawing without changing its proportions
 - Use the scale setting to choose how far apart the snap grid squares are

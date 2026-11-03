@@ -70,6 +70,13 @@ describe("plan snapping", () => {
     expect(result.point.y).toBe(0);
   });
 
+  it("starts at either endpoint or an independent point, rather than the last endpoint", () => {
+    const line = newItem("wall", { x: 0, y: 0 }, { x: 10, y: 0 });
+    expect(snapPoint({ x: -0.03, y: 0.02 }, [line], noGrid).point).toEqual({ x: 0, y: 0 });
+    expect(snapPoint({ x: 10.03, y: 0.02 }, [line], noGrid).point).toEqual({ x: 10, y: 0 });
+    expect(snapPoint({ x: 2, y: 4 }, [line], noGrid).point).toEqual({ x: 2, y: 4 });
+  });
+
   it("snaps to a grid intersection when object snapping is off", () => {
     const result = snapPoint(
       { x: 1.7, y: 3.2 },
