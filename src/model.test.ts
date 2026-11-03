@@ -3,17 +3,41 @@ import {
   formatFeetInches,
   isDrawingFile,
   itemBounds,
+  itemIntersectsSelection,
+  lineSections,
+  hasFullDimension,
   moveItem,
+  moveLineEndpoint,
+  moveJoint,
+  prepareJoint,
   newItem,
   parseFeetInches,
   resizeLine,
   snapPoint,
+  updateSelection,
 } from "./model";
 import type { DrawingFile } from "./model";
 import { drawingAsSvg } from "./io/drawingFiles";
 import { jpegAsPdf } from "./io/drawingPdf";
 
 describe("plan measurements", () => {
+  it("selects lines intersecting a dragged box in either direction", () => {
+    const from = { x: 2, y: 2 }, to = { x: 4, y: 4 };
+    const crossing = newItem("wall", { x: 0, y: 3 }, { x: 6, y: 3 });
+    const inside = newItem("dashed", { x: 2.5, y: 2.5 }, { x: 3, y: 3 });
+    const outside = newItem("wall", { x: 0, y: 4 }, { x: 3, y: 7 });
+    expect(itemIntersectsSelection(crossing, from, to)).toBe(true);
+    expect(itemIntersectsSelection(inside, to, from)).toBe(true);
+    expect(itemIntersectsSelection(outside, from, to)).toBe(false);
+    const curve = { ...newItem("freehand", { x: 0, y: 0 }, { x: 6, y: 6 }), points: [{ x: 0, y: 0 }, { x: 6, y: 6 }] };
+    expect(itemIntersectsSelection(curve, from, to)).toBe(true);
+  });
+  it("adds and removes individual items from a selection", () => {
+    expect(updateSelection(["a"], "b", true)).toEqual(["a", "b"]);
+    expect(updateSelection(["a", "b"], "a", true)).toEqual(["b"]);
+    expect(updateSelection(["a", "b"], "c")).toEqual(["c"]);
+    expect(updateSelection(["a", "b"], null)).toEqual([]);
+  });
   it("creates distinct items when randomUUID is unavailable", () => {
     vi.stubGlobal("crypto", {});
     try {
@@ -40,6 +64,39 @@ describe("plan measurements", () => {
     expect(resized.y).toBe(3);
     expect(Math.hypot(resized.x2 - resized.x, resized.y2 - resized.y)).toBeCloseTo(10);
     expect((resized.x2 - resized.x) / (resized.y2 - resized.y)).toBeCloseTo(3 / 4);
+  });
+
+  it("moves either endpoint without moving the opposite endpoint", () => {
+    const line = newItem("wall", { x: 1, y: 2 }, { x: 5, y: 7 });
+    const startMoved = moveLineEndpoint(line, "start", { x: -2, y: 3 });
+    expect([startMoved.x, startMoved.y, startMoved.x2, startMoved.y2]).toEqual([-2, 3, 5, 7]);
+    const endMoved = moveLineEndpoint(line, "end", { x: 8, y: 4 });
+    expect([endMoved.x, endMoved.y, endMoved.x2, endMoved.y2]).toEqual([1, 2, 8, 4]);
+    expect(endMoved.id).toBe(line.id);
+  });
+
+  it("moves all coincident endpoints while leaving unrelated lines alone", () => {
+    const joint = { x: 0, y: 0 };
+    const first = newItem("wall", { x: 0, y: 0 }, { x: 4, y: 0 });
+    const second = newItem("dashed", { x: -3, y: 2 }, joint);
+    const separate = newItem("wall", { x: 8, y: 8 }, { x: 9, y: 9 });
+    const moved = moveJoint(prepareJoint([first, second, separate], joint), joint, { x: 1, y: 1 });
+    expect([moved[0].x, moved[0].y, moved[0].x2, moved[0].y2]).toEqual([1, 1, 4, 0]);
+    expect([moved[1].x, moved[1].y, moved[1].x2, moved[1].y2]).toEqual([-3, 2, 1, 1]);
+    expect(moved[2]).toEqual(separate);
+  });
+
+  it("splits a line at an interior joint and moves both sides with the branch", () => {
+    const base = newItem("wall", { x: 0, y: 0 }, { x: 10, y: 0 });
+    const branch = newItem("wall", { x: 4, y: 0 }, { x: 4, y: 4 });
+    const joint = { x: 4, y: 0 };
+    const prepared = prepareJoint([base, branch], joint);
+    expect(prepared).toHaveLength(3);
+    const moved = moveJoint(prepared, joint, { x: 5, y: 2 });
+    expect([moved[0].x2, moved[0].y2]).toEqual([5, 2]);
+    expect([moved[1].x, moved[1].y]).toEqual([5, 2]);
+    expect([moved[2].x, moved[2].y]).toEqual([5, 2]);
+    expect(new Set(moved.map((item) => item.id)).size).toBe(3);
   });
 
   it("parses decimal feet and feet-and-inches measurements", () => {
@@ -86,6 +143,78 @@ describe("plan snapping", () => {
 
     expect(result.point).toEqual({ x: 1.5, y: 3 });
     expect(result.snapped).toBe(false);
+  });
+
+  it("snaps to the actual diagonal before the grid when both are enabled", () => {
+    const line = newItem("wall", { x: 0, y: 0 }, { x: 10, y: 5 });
+    const result = snapPoint({ x: 4, y: 2.04 }, [line], { ...noGrid, grid: true, gridFeet: 1 });
+    expect(result.snapped).toBe(true);
+    expect(result.point.y).toBeCloseTo(result.point.x / 2);
+    expect(result.point.x).toBeCloseTo(4.016);
+  });
+
+  it("snaps exactly to a nearby corner instead of creating a tiny extra section", () => {
+    const vertical = newItem("wall", { x: 0, y: -10 }, { x: 0, y: 0 });
+    const horizontal = newItem("wall", { x: 0, y: 0 }, { x: 10, y: 0 });
+    const result = snapPoint({ x: 0.08, y: -0.01 }, [vertical, horizontal], { ...noGrid, grid: true });
+    expect(result.point).toEqual({ x: 0, y: 0 });
+    const diagonal = newItem("wall", { x: 4, y: -4 }, result.point);
+    expect(lineSections(horizontal, [horizontal, diagonal])).toHaveLength(1);
+    expect(lineSections(vertical, [vertical, diagonal])).toHaveLength(1);
+  });
+
+  it("keeps a deliberate short section when it is outside the corner snap tolerance", () => {
+    const line = newItem("wall", { x: 0, y: 0 }, { x: 10, y: 0 });
+    const result = snapPoint({ x: 0.3, y: 0.01 }, [line], noGrid);
+    const branch = newItem("wall", { x: 2, y: 2 }, result.point);
+    expect(lineSections(line, [line, branch])).toHaveLength(2);
+  });
+
+  it("measures each section between attached endpoints and updates after a move", () => {
+    const base = newItem("wall", { x: 0, y: 0 }, { x: 10, y: 0 });
+    const branch = newItem("wall", { x: 3, y: 0 }, { x: 3, y: -4 });
+    const second = newItem("dashed", { x: 7, y: 2 }, { x: 7, y: 0 });
+    expect(lineSections(base, [base, branch, second]).map((section) => section.length)).toEqual([expect.closeTo(3), expect.closeTo(4), expect.closeTo(3)]);
+    expect(lineSections(base, [base, moveItem(branch, 1, 0)]).map((section) => section.length)).toEqual([expect.closeTo(4), expect.closeTo(6)]);
+    expect(lineSections(base, [base, moveItem(branch, 0, 5)]).map((section) => section.length)).toEqual([10]);
+  });
+
+  it("divides both lines where they cross and updates when they no longer cross", () => {
+    const first = newItem("wall", { x: 0, y: 0 }, { x: 8, y: 8 });
+    const second = newItem("wall", { x: 0, y: 8 }, { x: 8, y: 0 });
+    const items = [first, second];
+    for (const line of items) {
+      const sections = lineSections(line, items);
+      expect(sections).toHaveLength(2);
+      expect(sections[0].length).toBeCloseTo(Math.sqrt(32));
+      expect(sections[1].length).toBeCloseTo(Math.sqrt(32));
+    }
+    expect(lineSections(first, [first, moveItem(second, 20, 0)])).toHaveLength(1);
+    const svg = drawingAsSvg({ version: 1, name: "Crossing", gridFeet: 1, items }, true);
+    expect((svg.match(/marker-start="url\(#arrow\)"/g) ?? [])).toHaveLength(2);
+  });
+
+  it("does not create a crossing for parallel lines or intersecting extensions", () => {
+    const base = newItem("wall", { x: 0, y: 0 }, { x: 4, y: 0 });
+    const parallel = newItem("wall", { x: 1, y: 1 }, { x: 3, y: 1 });
+    const beyond = newItem("wall", { x: 5, y: -1 }, { x: 5, y: 1 });
+    expect(lineSections(base, [base, parallel, beyond])).toHaveLength(1);
+  });
+
+  it("uses an existing full dimension instead of creating a duplicate", () => {
+    const base = newItem("wall", { x: 0, y: 0 }, { x: 10, y: 0 });
+    const branch = newItem("wall", { x: 3, y: 0 }, { x: 3, y: -4 });
+    const dimension = newItem("dimension", { x: 10, y: 0 }, { x: 0, y: 0 });
+    expect(hasFullDimension(base, [base, dimension])).toBe(true);
+    const file: DrawingFile = { version: 1, name: "Plan", gridFeet: 1, items: [base, branch] };
+    const svg = drawingAsSvg(file, true);
+    expect(svg).toContain(formatFeetInches(3));
+    expect(svg).toContain(formatFeetInches(7));
+    expect(svg).toContain(formatFeetInches(10));
+    expect((svg.match(/marker-start="url\(#arrow\)"/g) ?? [])).toHaveLength(1);
+    expect((drawingAsSvg(file).match(/marker-start="url\(#arrow\)"/g) ?? [])).toHaveLength(0);
+    expect((drawingAsSvg({ ...file, items: [...file.items, dimension] }, true).match(/marker-start="url\(#arrow\)"/g) ?? [])).toHaveLength(1);
+    expect((drawingAsSvg({ ...file, items: [...file.items, dimension] }).match(/marker-start="url\(#arrow\)"/g) ?? [])).toHaveLength(1);
   });
 });
 

@@ -1,4 +1,4 @@
-import { formatFeetInches, itemBounds } from "../model";
+import { formatFeetInches, itemBounds, lineSections, hasFullDimension } from "../model";
 import type { DrawingFile, DrawingItem } from "../model";
 
 const EXPORT_SCALE = 72;
@@ -25,7 +25,7 @@ function dimensionLabel(text: string, x: number, y: number) {
     </g>`;
 }
 
-function renderItem(item: DrawingItem): string {
+function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDimensions = false): string {
   const scale = EXPORT_SCALE;
   const x = item.x * scale;
   const y = item.y * scale;
@@ -44,6 +44,15 @@ function renderItem(item: DrawingItem): string {
   if (item.kind === "wall" || item.kind === "dashed") {
     const line = `<line x1="${x}" y1="${y}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="2.5" stroke-linecap="round"${item.kind === "dashed" ? ' stroke-dasharray="9 6"' : ""}/>`;
     if (!item.showDimension) return line;
+    const sections = lineSections(item, items);
+    if (sections.length > 1) {
+      const labels = sections.map((section) => {
+        const midpoint = (section.start + section.end) / 2;
+        return dimensionLabel(formatFeetInches(section.length), x + dx * midpoint + dy / length * 22, y + dy * midpoint - dx / length * 22);
+      }).join("");
+      const full = !showOverallDimensions || hasFullDimension(item, items) ? "" : renderItem({ ...item, kind: "dimension" });
+      return `${line}${labels}${full}`;
+    }
     const labelX = (x + x2) / 2 - (dy / length) * 22;
     const labelY = (y + y2) / 2 + (dx / length) * 22;
     const label = item.label?.trim() || formatFeetInches(length / scale);
@@ -90,7 +99,7 @@ function renderItem(item: DrawingItem): string {
   return `<text x="${x}" y="${y}" fill="${color}" font-family="Arial,sans-serif" font-size="18" font-weight="600">${xml(item.label || "Note")}</text>`;
 }
 
-export function drawingAsSvg(file: DrawingFile): string {
+export function drawingAsSvg(file: DrawingFile, showOverallDimensions = false): string {
   // Export bounds include a little breathing room so labels at the edges aren't clipped.
   const bounds = file.items.map(itemBounds);
   const padding = 1.2 * EXPORT_SCALE;
@@ -109,7 +118,7 @@ export function drawingAsSvg(file: DrawingFile): string {
     <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0 0 L8 4 L0 8 Z" fill="#6f8295"/></marker>
   </defs>
   <rect x="${left}" y="${top}" width="${width}" height="${height}" fill="#fff"/>
-  ${file.items.map(renderItem).join("\n")}
+  ${file.items.map((item) => renderItem(item, file.items, showOverallDimensions)).join("\n")}
 </svg>`;
 }
 

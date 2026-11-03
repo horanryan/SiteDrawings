@@ -11,6 +11,7 @@ import type { DrawingItem } from "../model";
 
 interface InspectorProps {
   item: DrawingItem | undefined;
+  selectedCount: number;
   gridFeet: number;
   onGridFeetChange: (value: number) => void;
   onUpdate: (item: DrawingItem) => void;
@@ -110,6 +111,7 @@ function TextProperty({
 
 export default function Inspector({
   item,
+  selectedCount,
   gridFeet,
   onGridFeetChange,
   onUpdate,
@@ -188,7 +190,12 @@ export default function Inspector({
 
         <section className="property-section selection-section">
           <h3>SELECTION</h3>
-          {!item ? (
+          {selectedCount > 1 ? (
+            <div className="selection-properties">
+              <div className="selected-type">{selectedCount} items selected</div>
+              <button className="delete-selection" onClick={onDelete}><Trash2 size={14} /> Delete selected items</button>
+            </div>
+          ) : !item ? (
             <div className="selection-empty">
               <span className="selection-icon">↖</span>
               <span>Select a line or shape to edit its measurements.</span>

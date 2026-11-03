@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import Inspector from "./components/Inspector";
 import PlanCanvas, { DEFAULT_CAMERA } from "./components/PlanCanvas";
-import { isDrawingFile, itemBounds } from "./model";
+import { isDrawingFile, itemBounds, updateSelection } from "./model";
 import { drawingAsPdf } from "./io/drawingPdf";
 import type { DrawingFile, DrawingItem, DrawingTool, Point } from "./model";
 import {
@@ -72,17 +72,17 @@ function readDrawing(): DrawingFile {
   return parsed;
 }
 
-function downloadSvg(file: DrawingFile) {
+function downloadSvg(file: DrawingFile, showOverallDimensions: boolean) {
   downloadFile(
     `${safeFileName(file.name)}.svg`,
-    drawingAsSvg(file),
+    drawingAsSvg(file, showOverallDimensions),
     "image/svg+xml;charset=utf-8",
   );
 }
 
-function downloadPng(file: DrawingFile, onError: (message: string) => void) {
+function downloadPng(file: DrawingFile, showOverallDimensions: boolean, onError: (message: string) => void) {
   const svgUrl = URL.createObjectURL(
-    new Blob([drawingAsSvg(file)], { type: "image/svg+xml;charset=utf-8" }),
+    new Blob([drawingAsSvg(file, showOverallDimensions)], { type: "image/svg+xml;charset=utf-8" }),
   );
   const image = new Image();
 
@@ -162,11 +162,12 @@ function App() {
   const autosaveAllowed = useRef(!initialDrawing.error);
   const [projectName, setProjectName] = useState(initialDrawing.file.name);
   const [gridFeet, setGridFeet] = useState(initialDrawing.file.gridFeet);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [activeTool, setActiveTool] = useState<DrawingTool>("select");
   const [gridSnap, setGridSnap] = useState(true);
   const [objectSnap, setObjectSnap] = useState(true);
   const [showDimensions, setShowDimensions] = useState(true);
+  const [showOverallDimensions, setShowOverallDimensions] = useState(false);
   const [camera, setCamera] = useState(DEFAULT_CAMERA);
   const [spaceDown, setSpaceDown] = useState(false);
   const [saveMessage, setSaveMessage] = useState(
@@ -181,7 +182,7 @@ function App() {
   const coordinatesRef = useRef<HTMLSpanElement>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
-  const selectedItem = items.find((item) => item.id === selectedId);
+  const selectedItem = selectedIds.length === 1 ? items.find((item) => item.id === selectedIds[0]) : undefined;
   const context = getJobContext();
 
   useEffect(() => {
@@ -259,7 +260,7 @@ function App() {
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", releaseSpace);
     };
-  }, [gridFeet, projectName, selectedId]);
+  }, [gridFeet, projectName, selectedIds]);
 
   function showToast(message: string) {
     setToast(message);
@@ -288,7 +289,7 @@ function App() {
   function createItem(item: DrawingItem) {
     const next = [...itemsRef.current, item];
     commitItems(next);
-    setSelectedId(item.id);
+    setSelectedIds([item.id]);
   }
 
   function updateItem(updated: DrawingItem) {
@@ -296,9 +297,9 @@ function App() {
   }
 
   function deleteSelected() {
-    if (!selectedId) return;
-    commitItems(itemsRef.current.filter((item) => item.id !== selectedId));
-    setSelectedId(null);
+    if (!selectedIds.length) return;
+    commitItems(itemsRef.current.filter((item) => !selectedIds.includes(item.id)));
+    setSelectedIds([]);
   }
 
   function undo() {
@@ -307,7 +308,7 @@ function App() {
     redoStack.current.push(itemsRef.current);
     itemsRef.current = previous;
     setItems(previous);
-    setSelectedId(null);
+    setSelectedIds([]);
   }
 
   function redo() {
@@ -316,7 +317,7 @@ function App() {
     undoStack.current.push(itemsRef.current);
     itemsRef.current = next;
     setItems(next);
-    setSelectedId(null);
+    setSelectedIds([]);
   }
 
   function currentFile(): DrawingFile {
@@ -378,10 +379,10 @@ function App() {
 
   function handleExport(kind: "svg" | "png" | "json" | "pdf") {
     const file = drawingForExport();
-    if (kind === "svg") downloadSvg(file);
-    else if (kind === "png") downloadPng(file, showToast);
+    if (kind === "svg") downloadSvg(file, showOverallDimensions);
+    else if (kind === "png") downloadPng(file, showOverallDimensions, showToast);
     else if (kind === "pdf") {
-      void drawingAsPdf(file).then((pdf) => downloadFile(`${safeFileName(file.name)}.pdf`, pdf, "application/pdf")).catch((error: unknown) => {
+      void drawingAsPdf(file, showOverallDimensions).then((pdf) => downloadFile(`${safeFileName(file.name)}.pdf`, pdf, "application/pdf")).catch((error: unknown) => {
         console.error("PDF export failed", error);
         showToast("Could not export the PDF.");
       });
@@ -409,7 +410,7 @@ function App() {
       setProjectName(parsed.name);
       setGridFeet(parsed.gridFeet);
       autosaveAllowed.current = true;
-      setSelectedId(null);
+      setSelectedIds([]);
       setCamera(DEFAULT_CAMERA);
       showToast("Drawing imported.");
     } catch (error) {
@@ -532,6 +533,11 @@ function App() {
                 <span className="toggle-track" /><span>Dimensions</span>
               </label>
               <span className="action-divider" />
+              <label className="toggle-control">
+                <input type="checkbox" checked={showOverallDimensions} onChange={(event) => setShowOverallDimensions(event.target.checked)} />
+                <span className="toggle-track" /><span>Overall dimensions</span>
+              </label>
+              <span className="action-divider" />
               <button className="zoom-button" title="Zoom out" onClick={() => zoomBy(1 / 1.2)}><Minus size={14} /></button>
               <span className="zoom-level">{Math.round(camera.zoom * 100)}%</span>
               <button className="zoom-button" title="Zoom in" onClick={() => zoomBy(1.2)}><Plus size={14} /></button>
@@ -541,19 +547,22 @@ function App() {
 
           <PlanCanvas
             items={items}
-            selectedId={selectedId}
+            selectedIds={selectedIds}
             activeTool={activeTool}
             gridFeet={gridFeet}
             gridSnap={gridSnap}
             objectSnap={objectSnap}
             showDimensions={showDimensions}
+            showOverallDimensions={showOverallDimensions}
             spaceDown={spaceDown}
             camera={camera}
             onCameraChange={setCamera}
             onCreate={createItem}
             onChooseTool={setActiveTool}
-            onSelect={setSelectedId}
+            onSelect={(id, additive = false) => setSelectedIds((current) => updateSelection(current, id, additive))}
+            onBoxSelect={(ids, additive) => setSelectedIds((current) => additive ? [...new Set([...current, ...ids])] : ids)}
             onUpdate={updateItem}
+            onUpdateItems={commitItems}
             onCursorMove={updateCoordinates}
           />
 
@@ -566,6 +575,7 @@ function App() {
 
         <Inspector
           item={selectedItem}
+          selectedCount={selectedIds.length}
           gridFeet={gridFeet}
           onGridFeetChange={(value) => {
             autosaveAllowed.current = true;

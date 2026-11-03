@@ -6,8 +6,12 @@ import {
   distance,
   formatFeetInches,
   itemLength,
-  itemBounds,
+  itemIntersectsSelection,
+  lineSections,
+  hasFullDimension,
   moveItem,
+  moveJoint,
+  prepareJoint,
   newItem,
   snapPoint,
 } from "../model";
@@ -24,19 +28,22 @@ export interface Camera {
 
 interface PlanCanvasProps {
   items: DrawingItem[];
-  selectedId: string | null;
+  selectedIds: string[];
   activeTool: DrawingTool;
   gridFeet: number;
   gridSnap: boolean;
   objectSnap: boolean;
   showDimensions: boolean;
+  showOverallDimensions: boolean;
   spaceDown: boolean;
   camera: Camera;
   onCameraChange: (camera: Camera) => void;
   onCreate: (item: DrawingItem) => void;
   onChooseTool: (tool: DrawingTool) => void;
-  onSelect: (id: string | null) => void;
+  onSelect: (id: string | null, additive?: boolean) => void;
+  onBoxSelect: (ids: string[], additive: boolean) => void;
   onUpdate: (item: DrawingItem) => void;
+  onUpdateItems: (items: DrawingItem[]) => void;
   onCursorMove: (point: Point) => void;
 }
 
@@ -52,6 +59,13 @@ interface PanGesture {
   pointerId: number;
   startPointer: Point;
   camera: Camera;
+}
+
+interface SelectionBox {
+  pointerId: number;
+  start: Point;
+  current: Point;
+  additive: boolean;
 }
 
 interface PinchGesture {
@@ -114,7 +128,7 @@ function Label({
   );
 }
 
-function LineDrawing({ item }: { item: DrawingItem }) {
+function LineDrawing({ item, items = [], showOverallDimensions = false }: { item: DrawingItem; items?: DrawingItem[]; showOverallDimensions?: boolean }) {
   const dx = item.x2 - item.x;
   const dy = item.y2 - item.y;
   const length = itemLength(item) || 1;
@@ -123,6 +137,8 @@ function LineDrawing({ item }: { item: DrawingItem }) {
   const labelY = dy / 2 + (dx / length) * offset;
   const points = [0, 0, dx, dy];
   const dashed = item.kind === "dashed";
+  const sections = lineSections(item, items);
+  const divided = sections.length > 1;
 
   return (
     <>
@@ -140,12 +156,19 @@ function LineDrawing({ item }: { item: DrawingItem }) {
         strokeWidth={0.38}
         hitStrokeWidth={0.38}
       />
-      {item.showDimension && (
+      {item.showDimension && !divided && (
         <Label
           x={labelX}
           y={labelY}
           text={dimensionText(item, formatFeetInches(length))}
         />
+      )}
+      {item.showDimension && divided && sections.map((section, index) => {
+        const midpoint = (section.start + section.end) / 2;
+        return <Label key={index} x={dx * midpoint + dy / length * offset} y={dy * midpoint - dx / length * offset} text={formatFeetInches(section.length)} />;
+      })}
+      {item.showDimension && divided && showOverallDimensions && !hasFullDimension(item, items) && (
+        <DimensionDrawing item={{ ...item, kind: "dimension" }} />
       )}
     </>
   );
@@ -280,6 +303,7 @@ const DrawingShape = memo(function DrawingShape({
   gridSnap,
   objectSnap,
   showDimensions,
+  showOverallDimensions,
   items,
   camera,
   selectItem,
@@ -292,9 +316,10 @@ const DrawingShape = memo(function DrawingShape({
   gridSnap: boolean;
   objectSnap: boolean;
   showDimensions: boolean;
+  showOverallDimensions: boolean;
   items: DrawingItem[];
   camera: Camera;
-  selectItem: (id: string) => void;
+  selectItem: (id: string, additive?: boolean) => void;
   onUpdate: (item: DrawingItem) => void;
 }) {
   function snapDrag(event: KonvaEventObject<DragEvent>) {
@@ -324,21 +349,12 @@ const DrawingShape = memo(function DrawingShape({
       draggable={draggable}
       id={item.id}
       name="drawing-item"
-      onPointerDown={() => {
-        if (draggable) {
-          selectItem(item.id);
-        }
-      }}
-      onClick={(event) => {
-        if (draggable) {
+      onPointerDown={(event) => {
+        const additive = event.evt.ctrlKey || event.evt.metaKey;
+        if (draggable || additive) {
           event.cancelBubble = true;
-          selectItem(item.id);
-        }
-      }}
-      onTap={(event) => {
-        if (draggable) {
-          event.cancelBubble = true;
-          selectItem(item.id);
+          event.evt.preventDefault();
+          selectItem(item.id, additive);
         }
       }}
       onDragMove={snapDrag}
@@ -347,7 +363,7 @@ const DrawingShape = memo(function DrawingShape({
       {item.kind === "freehand" ? (
         <FreehandDrawing item={item} />
       ) : item.kind === "wall" || item.kind === "dashed" ? (
-        <LineDrawing item={{ ...item, showDimension: showDimensions && item.showDimension }} />
+        <LineDrawing item={{ ...item, showDimension: showDimensions && item.showDimension }} items={items} showOverallDimensions={showOverallDimensions} />
       ) : item.kind === "rectangle" ? (
         <RectangleDrawing item={{ ...item, showDimension: showDimensions && item.showDimension }} />
       ) : item.kind === "circle" ? (
@@ -364,11 +380,10 @@ const DrawingShape = memo(function DrawingShape({
           padding={0.08}
         />
       )}
-      {selected && item.kind === "freehand" && (() => {
-        const bounds = itemBounds(item);
-        return <Rect x={bounds.left - item.x - 0.08} y={bounds.top - item.y - 0.08} width={bounds.right - bounds.left + 0.16} height={bounds.bottom - bounds.top + 0.16} stroke="#3b91ce" strokeWidth={0.025} dash={[0.08, 0.06]} listening={false} />;
-      })()}
-      {selected && item.kind !== "freehand" && (
+      {selected && (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" || item.kind === "freehand") && (
+        <Line points={item.kind === "freehand" ? (item.points ?? []).flatMap((point) => [point.x, point.y]) : [0, 0, item.x2 - item.x, item.y2 - item.y]} stroke="#3b91ce" strokeWidth={0.14} opacity={0.55} lineCap="round" lineJoin="round" listening={false} />
+      )}
+      {selected && item.kind !== "wall" && item.kind !== "dashed" && item.kind !== "dimension" && item.kind !== "freehand" && (
         item.kind === "circle" ? (
           <Circle
             radius={distance({ x: item.x, y: item.y }, { x: item.x2, y: item.y2 }) + 0.08}
@@ -470,31 +485,52 @@ const Grid = memo(function Grid({
 
 export default function PlanCanvas({
   items,
-  selectedId,
+  selectedIds,
   activeTool,
   gridFeet,
   gridSnap,
   objectSnap,
   showDimensions,
+  showOverallDimensions,
   spaceDown,
   camera,
   onCameraChange,
   onCreate,
   onChooseTool,
   onSelect,
+  onBoxSelect,
   onUpdate,
+  onUpdateItems,
   onCursorMove,
 }: PlanCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [gesture, setGesture] = useState<Gesture | null>(null);
+  const [endpointPreview, setEndpointPreview] = useState<DrawingItem[] | null>(null);
+  const jointRef = useRef<{ point: Point; prepared: DrawingItem[] } | null>(null);
   const gestureRef = useRef<Gesture | null>(null);
+  const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
+  const selectionBoxRef = useRef<SelectionBox | null>(null);
   const panRef = useRef<PanGesture | null>(null);
   const pinchRef = useRef<PinchGesture | null>(null);
   const touchPointsRef = useRef(new Map<number, Point>());
   const penPointersRef = useRef(new Set<number>());
   const pixelsPerFoot = PIXELS_PER_FOOT * camera.zoom;
+  const selectedLine = selectedIds.length === 1 ? items.find((item) => item.id === selectedIds[0] && (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension")) : undefined;
+  const displayedItems = endpointPreview ?? items;
+
+  useEffect(() => {
+    setEndpointPreview(null);
+  }, [selectedIds]);
+
+  function endpointAt(event: KonvaEventObject<DragEvent>, joint: { point: Point; prepared: DrawingItem[] }) {
+    const position = event.target.position();
+    const stationary = joint.prepared.filter((item) => !((item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension") && (distance({ x: item.x, y: item.y }, joint.point) <= 1e-6 || distance({ x: item.x2, y: item.y2 }, joint.point) <= 1e-6)));
+    const point = snapPoint(position, stationary, { grid: gridSnap, objects: objectSnap, gridFeet, toleranceFeet: 10 / pixelsPerFoot }).point;
+    event.target.position(point);
+    return distance(joint.point, point) <= 1e-6 ? items : moveJoint(joint.prepared, joint.point, point);
+  }
 
   useEffect(() => {
     if (!hostRef.current) return undefined;
@@ -625,7 +661,13 @@ export default function PlanCanvas({
       gestureRef.current = nextGesture;
       setGesture(nextGesture);
     } else if (target === target.getStage()) {
-      onSelect(null);
+      if (event.pointerType === "mouse" && event.button === 0) {
+        const box = { pointerId: event.pointerId, start: point, current: point, additive: event.ctrlKey || event.metaKey };
+        selectionBoxRef.current = box;
+        setSelectionBox(box);
+      } else {
+        onSelect(null);
+      }
     }
   }
 
@@ -669,6 +711,13 @@ export default function PlanCanvas({
       return;
     }
 
+    if (selectionBoxRef.current?.pointerId === event.pointerId) {
+      const box = { ...selectionBoxRef.current, current: point };
+      selectionBoxRef.current = box;
+      setSelectionBox(box);
+      return;
+    }
+
     const currentGesture = gestureRef.current;
     if (currentGesture?.pointerId === event.pointerId) {
       const current = currentGesture.kind === "freehand" ? point : snap(point).point;
@@ -696,10 +745,24 @@ export default function PlanCanvas({
     }
 
     if (panRef.current?.pointerId === event.pointerId) panRef.current = null;
+    const box = selectionBoxRef.current;
+    if (box?.pointerId === event.pointerId) {
+      const end = pointerPosition(event) ?? box.current;
+      if (!cancelled) {
+        if (distance(box.start, end) * pixelsPerFoot >= 4) {
+          onBoxSelect(items.filter((item) => itemIntersectsSelection(item, box.start, end)).map((item) => item.id), box.additive);
+        } else if (!box.additive) onSelect(null);
+      }
+      selectionBoxRef.current = null;
+      setSelectionBox(null);
+      return;
+    }
     const currentGesture = gestureRef.current;
     if (!currentGesture || currentGesture.pointerId !== event.pointerId) return;
-    if (!cancelled && (currentGesture.kind === "freehand" ? (currentGesture.points?.length ?? 0) >= 2 : distance(currentGesture.start, currentGesture.current) > 0.04)) {
-      const item = newItem(currentGesture.kind, currentGesture.start, currentGesture.current);
+    const releasePoint = pointerPosition(event);
+    const end = currentGesture.kind === "freehand" || !releasePoint ? currentGesture.current : snap(releasePoint).point;
+    if (!cancelled && (currentGesture.kind === "freehand" ? (currentGesture.points?.length ?? 0) >= 2 : distance(currentGesture.start, end) > 0.04)) {
+      const item = newItem(currentGesture.kind, currentGesture.start, end);
       if (currentGesture.points) item.points = currentGesture.points;
       onCreate(item);
     }
@@ -750,26 +813,21 @@ export default function PlanCanvas({
         onPointerUp={(event) => handlePointerUp(event.evt, event.evt.type === "pointercancel")}
         onPointerCancel={(event) => handlePointerUp(event.evt, true)}
         onWheel={handleWheel}
-        onClick={(event) => {
-          if (event.target === event.target.getStage() && activeTool === "select") onSelect(null);
-        }}
-        onTap={(event) => {
-          if (event.target === event.target.getStage() && activeTool === "select") onSelect(null);
-        }}
       >
         <Grid width={size.width} height={size.height} camera={camera} gridFeet={gridFeet} />
         <Layer>
-          {items.map((item) => (
+          {displayedItems.map((item) => (
             <DrawingShape
               key={item.id}
               item={item}
-              selected={item.id === selectedId}
+              selected={selectedIds.includes(item.id)}
               draggable={activeTool === "select"}
               gridFeet={gridFeet}
               gridSnap={gridSnap}
               objectSnap={objectSnap}
               showDimensions={showDimensions}
-              items={items}
+              showOverallDimensions={showOverallDimensions}
+              items={displayedItems}
               camera={camera}
               selectItem={onSelect}
               onUpdate={onUpdate}
@@ -790,6 +848,29 @@ export default function PlanCanvas({
               )}
             </Group>
           )}
+          {selectionBox && <Rect x={Math.min(selectionBox.start.x, selectionBox.current.x)} y={Math.min(selectionBox.start.y, selectionBox.current.y)} width={Math.abs(selectionBox.current.x - selectionBox.start.x)} height={Math.abs(selectionBox.current.y - selectionBox.start.y)} fill="rgba(59, 145, 206, 0.12)" stroke="#3b91ce" strokeWidth={1 / pixelsPerFoot} dash={[5 / pixelsPerFoot, 4 / pixelsPerFoot]} listening={false} />}
+          {selectedLine && (["start", "end"] as const).map((endpoint) => {
+            const shown = displayedItems.find((item) => item.id === selectedLine.id) ?? selectedLine;
+            return <Circle key={`${selectedLine.id}-${endpoint}`} x={endpoint === "start" ? shown.x : shown.x2} y={endpoint === "start" ? shown.y : shown.y2} radius={6 / pixelsPerFoot} hitStrokeWidth={16 / pixelsPerFoot} fill="white" stroke="#287bc0" strokeWidth={2 / pixelsPerFoot} draggable
+              onPointerDown={(event) => { event.cancelBubble = true; }}
+              onMouseDown={(event) => { event.cancelBubble = true; }}
+              onTouchStart={(event) => { event.cancelBubble = true; }}
+              onDragStart={(event) => {
+                event.cancelBubble = true;
+                const point = endpoint === "start" ? { x: selectedLine.x, y: selectedLine.y } : { x: selectedLine.x2, y: selectedLine.y2 };
+                jointRef.current = { point, prepared: prepareJoint(items, point) };
+              }}
+              onDragMove={(event) => { event.cancelBubble = true; if (jointRef.current) setEndpointPreview(endpointAt(event, jointRef.current)); }}
+              onDragEnd={(event) => {
+                event.cancelBubble = true;
+                if (!event.evt.type.includes("cancel") && jointRef.current) {
+                  const updated = endpointAt(event, jointRef.current);
+                  if (updated.every((item) => !["wall", "dashed", "dimension"].includes(item.kind) || distance({ x: item.x, y: item.y }, { x: item.x2, y: item.y2 }) > 0.001)) onUpdateItems(updated);
+                }
+                jointRef.current = null;
+                setEndpointPreview(null);
+              }} />;
+          })}
         </Layer>
       </Stage>
       {items.length === 0 && !gesture && activeTool === "select" && (

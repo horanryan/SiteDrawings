@@ -38,8 +38,8 @@ export function jpegAsPdf(jpeg: Uint8Array, width: number, height: number): Blob
   return new Blob(chunks as BlobPart[], { type: "application/pdf" });
 }
 
-export async function drawingAsPdf(file: DrawingFile): Promise<Blob> {
-  const url = URL.createObjectURL(new Blob([drawingAsSvg(file)], { type: "image/svg+xml;charset=utf-8" }));
+export async function drawingAsPdf(file: DrawingFile, showOverallDimensions = false): Promise<Blob> {
+  const url = URL.createObjectURL(new Blob([drawingAsSvg(file, showOverallDimensions)], { type: "image/svg+xml;charset=utf-8" }));
   try {
     const image = new Image();
     await new Promise<void>((resolve, reject) => {
