@@ -11,6 +11,12 @@ npm run dev
 
 Open the local URL printed by Vite. Create a production build with `npm run build`.
 
+## GitHub Pages
+
+In the repository's **Settings → Pages**, set the build source to **GitHub Actions**. Pushing to `main` then runs the tests, builds the app, and publishes it. You can also run the deployment workflow manually from the Actions tab. For this repository the expected address is `https://horanryan.github.io/SiteDrawings/`.
+
+Plans are stored in each browser on each device, not on GitHub or shared between devices. Export drawing data as JSON to transfer or back up a plan. A browser's existing local drawings on a different host or port will not automatically appear on GitHub Pages.
+
 ## Drawing tools
 
 - Lines, dashed lines, rectangles, circles, dimension lines, and notes
