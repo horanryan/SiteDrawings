@@ -45,7 +45,7 @@ interface PlanCanvasProps {
   spaceDown: boolean;
   camera: Camera;
   onCameraChange: (camera: Camera) => void;
-  onCreate: (item: DrawingItem) => void;
+  onCreate: (item: DrawingItem) => boolean;
   onCreatePolygon: (kind: PolygonTool, start: Point, end: Point) => void;
   onChooseTool: (tool: DrawingTool) => void;
   onSelect: (id: string | null, additive?: boolean) => void;
@@ -329,6 +329,8 @@ const DrawingShape = memo(function DrawingShape({
   items,
   camera,
   selectItem,
+  editNote,
+  noteToolActive,
   onUpdate,
 }: {
   item: DrawingItem;
@@ -345,9 +347,12 @@ const DrawingShape = memo(function DrawingShape({
   items: DrawingItem[];
   camera: Camera;
   selectItem: (id: string, additive?: boolean) => void;
+  editNote: (item: DrawingItem) => void;
+  noteToolActive: boolean;
   onUpdate: (item: DrawingItem) => void;
 }) {
   const visualItem = { ...item, color: displayColor(item.color, theme) };
+  const notePressRef = useRef<{ x: number; y: number } | null>(null);
 
   function snapDrag(event: KonvaEventObject<DragEvent>) {
     const position = event.target.position();
@@ -382,12 +387,29 @@ const DrawingShape = memo(function DrawingShape({
       name="drawing-item"
       onPointerDown={(event) => {
         const additive = event.evt.ctrlKey || event.evt.metaKey;
+        if (item.kind === "note" && noteToolActive) {
+          event.cancelBubble = true;
+          event.evt.preventDefault();
+          selectItem(item.id);
+          editNote(item);
+          return;
+        }
         if (draggable || additive) {
+          if (draggable && item.kind === "note" && !additive) notePressRef.current = { x: event.evt.clientX, y: event.evt.clientY };
           event.cancelBubble = true;
           event.evt.preventDefault();
           selectItem(item.id, additive);
         }
       }}
+      onPointerUp={(event) => {
+        const start = notePressRef.current;
+        notePressRef.current = null;
+        if (start && Math.hypot(event.evt.clientX - start.x, event.evt.clientY - start.y) < 4) {
+          event.cancelBubble = true;
+          editNote(item);
+        }
+      }}
+      onDragStart={() => { notePressRef.current = null; }}
       onDragMove={snapDrag}
       onDragEnd={finishDrag}
     >
@@ -545,6 +567,9 @@ export default function PlanCanvas({
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [gesture, setGesture] = useState<Gesture | null>(null);
   const [endpointPreview, setEndpointPreview] = useState<DrawingItem[] | null>(null);
+  const [editingNote, setEditingNote] = useState<{ id: string; text: string } | null>(null);
+  const noteInputRef = useRef<HTMLInputElement>(null);
+  const cancelNoteRef = useRef(false);
   const jointRef = useRef<{ point: Point; prepared: DrawingItem[] } | null>(null);
   const gestureRef = useRef<Gesture | null>(null);
   const gestureFrameRef = useRef<number | null>(null);
@@ -563,6 +588,25 @@ export default function PlanCanvas({
   useEffect(() => {
     setEndpointPreview(null);
   }, [selectedIds]);
+
+  useEffect(() => {
+    if (editingNote) noteInputRef.current?.focus();
+  }, [editingNote?.id]);
+
+  function beginNoteEdit(item: DrawingItem) {
+    cancelNoteRef.current = false;
+    setEditingNote({ id: item.id, text: item.label ?? "" });
+  }
+
+  function finishNoteEdit() {
+    if (!editingNote) return;
+    const item = items.find((entry) => entry.id === editingNote.id);
+    if (!cancelNoteRef.current && item && (item.label ?? "") !== editingNote.text) {
+      onUpdate({ ...item, label: editingNote.text });
+    }
+    cancelNoteRef.current = false;
+    setEditingNote(null);
+  }
 
   function scheduleGesturePreview() {
     if (gestureFrameRef.current !== null) return;
@@ -728,7 +772,8 @@ export default function PlanCanvas({
     if (target !== target.getStage() && activeTool === "select") return;
     if (activeTool === "note") {
       const snapped = snap(point).point;
-      onCreate(newItem("note", snapped, snapped));
+      const note = newItem("note", snapped, snapped);
+      if (onCreate(note)) beginNoteEdit(note);
       return;
     }
     if (activeTool !== "select") {
@@ -920,6 +965,8 @@ export default function PlanCanvas({
               items={displayedItems}
               camera={camera}
               selectItem={onSelect}
+              editNote={beginNoteEdit}
+              noteToolActive={activeTool === "note"}
               onUpdate={onUpdate}
             />
           ))}
@@ -966,6 +1013,13 @@ export default function PlanCanvas({
           })}
         </Layer>
       </Stage>
+      {editingNote && (() => {
+        const note = items.find((item) => item.id === editingNote.id);
+        if (!note) return null;
+        const left = Math.max(0, Math.min(size.width - Math.min(240, size.width), camera.x + note.x * pixelsPerFoot));
+        const top = Math.max(0, Math.min(size.height - 38, camera.y + note.y * pixelsPerFoot));
+        return <input ref={noteInputRef} className="canvas-note-input" aria-label="Note text" placeholder="Type a note…" maxLength={1000} value={editingNote.text} style={{ left, top }} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => setEditingNote({ ...editingNote, text: event.target.value })} onBlur={finishNoteEdit} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelNoteRef.current = true; event.currentTarget.blur(); } }} />;
+      })()}
       {items.length === 0 && !gesture && activeTool === "select" && (
         <div className="canvas-empty">
           <div className="empty-grid-icon" aria-hidden="true"><span>⌗</span></div>

@@ -18,6 +18,7 @@ The GitHub Actions workflow tests and builds the app, then deploys it to GitHub 
 ## Drawing and editing
 
 - Use Line, Dashed, Dimension, Arrow, Note, or Freehand from the tool rail. Arrow is an annotation: drag from its tail toward the point you want to indicate; it does not display a measurement.
+- Place a note on the canvas and type immediately. Press Enter or click away to save; press Escape to cancel an edit. Click a note in Select or Note mode to edit it again.
 - Open Shapes for rectangle, circle, triangle, diamond, pentagon, hexagon, octagon, or star. Draw by dragging on the canvas. A circle is drawn from its center to its radius; other shapes use the dragged bounds.
 - New rectangles and polygons become independently editable line segments. One Undo removes all segments created by a single shape. Existing saved rectangle objects remain editable as rectangles.
 - The Layers panel lists drawing elements. Select a layer to edit it, Ctrl-click (Command-click on a Mac) to select more, and use the panel controls to reorder, duplicate, or delete selected items. Change a selected element's layer name in Properties. Layers currently do not support hiding or locking.

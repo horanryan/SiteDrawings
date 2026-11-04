@@ -378,11 +378,12 @@ function App() {
     const created = item.kind === "rectangle" ? rectangleAsLines(item) : [item];
     if (!created.length) {
       showToast("Draw a rectangle with both width and height.");
-      return;
+      return false;
     }
     const next = [...itemsRef.current, ...created];
-    if (!commitItems(next)) return;
+    if (!commitItems(next)) return false;
     setSelectedIds(created.length === 1 ? [created[0].id] : []);
+    return true;
   }
 
   function createPolygon(kind: PolygonTool, start: Point, end: Point) {
