@@ -17,6 +17,8 @@ In the repository's **Settings → Pages**, set the build source to **GitHub Act
 
 Plans are stored in each browser on each device, not on GitHub or shared between devices. Export drawing data as JSON to transfer or back up a plan. A browser's existing local drawings on a different host or port will not automatically appear on GitHub Pages.
 
+When embedding the app, use an opaque `job_id` query parameter only. Do not put customer names, email addresses, credentials, or other personal information in URLs; query strings may be recorded in browser history and server logs. The app removes known customer-detail parameters from the address bar and sends a `no-referrer` policy, but this cannot undo exposure to the server that handled the initial request. Drawings remain browser-local and are not protected by a backend authorization layer.
+
 ## Drawing tools
 
 - Lines, dashed lines, rectangles, circles, dimension lines, and notes
@@ -32,6 +34,7 @@ Plans are stored in each browser on each device, not on GitHub or shared between
 - In Select mode, drag a box from an empty area to select items it touches; Ctrl-drag adds to the current selection
 - In Select mode, select one line and drag either endpoint handle to reposition it; connected line endpoints follow the joint, and grid and object snapping apply
 - PDF exports use landscape letter pages and fit the whole drawing without changing its proportions
+- JSON imports are limited to 10 MB, 1,000 items, and bounded freehand point counts to protect the browser from oversized files
 - Use the scale setting to choose how far apart the snap grid squares are
 - On iPad, drag with a finger or Apple Pencil to draw. In Select mode, drag an item to move it or drag the background to pan. Use two fingers to pan and pinch-zoom.
 

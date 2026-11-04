@@ -24,7 +24,15 @@ import {
 import Inspector from "./components/Inspector";
 import logo from "./assets/rh-red.svg";
 import PlanCanvas, { DEFAULT_CAMERA } from "./components/PlanCanvas";
-import { isDrawingFile, itemBounds, rectangleAsLines, updateSelection } from "./model";
+import {
+  isDrawingFile,
+  itemBounds,
+  MAX_DRAWING_FILE_BYTES,
+  MAX_DRAWING_ITEMS,
+  MAX_TOTAL_FREEHAND_POINTS,
+  rectangleAsLines,
+  updateSelection,
+} from "./model";
 import { drawingAsPdf } from "./io/drawingPdf";
 import type { DrawingFile, DrawingItem, DrawingTool, Point } from "./model";
 import {
@@ -65,6 +73,9 @@ function readDrawing(): DrawingFile {
     return { version: 1, name: "New construction plan", gridFeet: 1, items: [] };
   }
 
+  if (raw.length > MAX_DRAWING_FILE_BYTES) {
+    throw new Error("The saved plan is larger than the supported size.");
+  }
   const parsed: unknown = JSON.parse(raw);
   if (!isDrawingFile(parsed)) {
     throw new Error("The saved plan has an unsupported or invalid format.");
@@ -87,9 +98,21 @@ function downloadPng(file: DrawingFile, showOverallDimensions: boolean, onError:
   const image = new Image();
 
   image.onload = () => {
+    if (!image.naturalWidth || !image.naturalHeight) {
+      URL.revokeObjectURL(svgUrl);
+      onError("The plan has invalid dimensions and could not be converted to PNG.");
+      return;
+    }
+
+    const scale = Math.min(
+      2,
+      4096 / image.naturalWidth,
+      4096 / image.naturalHeight,
+      Math.sqrt(16_777_216 / (image.naturalWidth * image.naturalHeight)),
+    );
     const canvas = document.createElement("canvas");
-    canvas.width = image.naturalWidth * 2;
-    canvas.height = image.naturalHeight * 2;
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
     const context = canvas.getContext("2d");
     if (!context) {
       URL.revokeObjectURL(svgUrl);
@@ -189,6 +212,10 @@ function App() {
     itemsRef.current = items;
   }, [items]);
 
+  useEffect(() => () => {
+    if (toastTimer.current !== undefined) window.clearTimeout(toastTimer.current);
+  }, []);
+
   useEffect(() => {
     if (!autosaveAllowed.current) return;
     const timer = window.setTimeout(() => {
@@ -277,13 +304,18 @@ function App() {
 
   function commitItems(next: DrawingItem[]) {
     const previous = itemsRef.current;
-    if (JSON.stringify(previous) === JSON.stringify(next)) return;
+    if (JSON.stringify(previous) === JSON.stringify(next)) return false;
+    if (!isDrawingFile({ version: 1, name: projectName.trim() || "Untitled plan", gridFeet, items: next })) {
+      showToast(`This drawing reached its supported limit of ${MAX_DRAWING_ITEMS} items or ${MAX_TOTAL_FREEHAND_POINTS.toLocaleString()} freehand points.`);
+      return false;
+    }
     undoStack.current.push(previous);
     if (undoStack.current.length > 100) undoStack.current.shift();
     redoStack.current = [];
     autosaveAllowed.current = true;
     itemsRef.current = next;
     setItems(next);
+    return true;
   }
 
   function createItem(item: DrawingItem) {
@@ -293,7 +325,7 @@ function App() {
       return;
     }
     const next = [...itemsRef.current, ...created];
-    commitItems(next);
+    if (!commitItems(next)) return;
     setSelectedIds(created.length === 1 ? [created[0].id] : []);
   }
 
@@ -404,6 +436,9 @@ function App() {
   async function importDrawing(file?: File) {
     if (!file) return;
     try {
+      if (file.size > MAX_DRAWING_FILE_BYTES) {
+        throw new Error("Drawing files must be 10 MB or smaller.");
+      }
       const parsed: unknown = JSON.parse(await file.text());
       if (!isDrawingFile(parsed)) {
         throw new Error("This file is not a supported SiteSketch drawing.");
@@ -607,7 +642,7 @@ function App() {
               <li>Open it from a customer’s Design Tools page.</li>
             </ol>
             <div className="dialog-note">
-              The app recognizes <code>job_id</code>, <code>customer_name</code>, and <code>customer_email</code> query parameters. It does not connect to a private One Click API or save records back to One Click.
+              The app uses an opaque <code>job_id</code> only to separate browser-local plans. Customer names and email query parameters are discarded; do not put personal information or credentials in the URL. This app does not connect to a private One Click API or save records back to One Click.
             </div>
             <button className="button button-primary" onClick={() => setConnectOpen(false)}>Got it</button>
           </section>
@@ -622,19 +657,7 @@ function App() {
 function getJobContext() {
   const params = new URLSearchParams(location.search);
   const jobId = params.get("job_id") || params.get("jobId") || params.get("job.id");
-  const customer =
-    params.get("customer_name") ||
-    params.get("customerName") ||
-    params.get("customer.name");
-  const email =
-    params.get("customer_email") ||
-    params.get("customerEmail") ||
-    params.get("job.email");
-  return [
-    jobId && `Job ${jobId}`,
-    customer,
-    email,
-  ].filter(Boolean).join(" · ");
+  return jobId ? `Job ${jobId}` : "";
 }
 
 export default App;

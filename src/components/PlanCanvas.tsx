@@ -8,6 +8,7 @@ import {
   itemLength,
   itemIntersectsSelection,
   lineSections,
+  lineSectionsByItem,
   layoutLineLabels,
   hasFullDimension,
   moveItem,
@@ -15,6 +16,7 @@ import {
   prepareJoint,
   newItem,
   snapPoint,
+  MAX_FREEHAND_POINTS,
 } from "../model";
 import type { DrawingItem, DrawingTool, Point, ShapeTool } from "../model";
 
@@ -129,7 +131,7 @@ function Label({
   );
 }
 
-function LineDrawing({ item, items = [], showOverallDimensions = false, labelPositions }: { item: DrawingItem; items?: DrawingItem[]; showOverallDimensions?: boolean; labelPositions?: Point[] }) {
+function LineDrawing({ item, items = [], sections, showOverallDimensions = false, labelPositions }: { item: DrawingItem; items?: DrawingItem[]; sections?: Array<{ start: number; end: number; length: number }>; showOverallDimensions?: boolean; labelPositions?: Point[] }) {
   const dx = item.x2 - item.x;
   const dy = item.y2 - item.y;
   const length = itemLength(item) || 1;
@@ -138,8 +140,8 @@ function LineDrawing({ item, items = [], showOverallDimensions = false, labelPos
   const labelY = dy / 2 + (dx / length) * offset;
   const points = [0, 0, dx, dy];
   const dashed = item.kind === "dashed";
-  const sections = lineSections(item, items);
-  const divided = sections.length > 1;
+  const lineParts = sections ?? lineSections(item, items);
+  const divided = lineParts.length > 1;
 
   return (
     <>
@@ -164,7 +166,7 @@ function LineDrawing({ item, items = [], showOverallDimensions = false, labelPos
           text={dimensionText(item, formatFeetInches(length))}
         />
       )}
-      {item.showDimension && divided && sections.map((section, index) => {
+      {item.showDimension && divided && lineParts.map((section, index) => {
         const midpoint = (section.start + section.end) / 2;
         return <Label key={index} x={labelPositions?.[index] ? labelPositions[index].x - item.x : dx * midpoint + dy / length * offset} y={labelPositions?.[index] ? labelPositions[index].y - item.y : dy * midpoint - dx / length * offset} text={formatFeetInches(section.length)} />;
       })}
@@ -302,6 +304,7 @@ const DrawingShape = memo(function DrawingShape({
   showDimensions,
   showOverallDimensions,
   labelPositions,
+  sectionsByItem,
   items,
   camera,
   selectItem,
@@ -316,6 +319,7 @@ const DrawingShape = memo(function DrawingShape({
   showDimensions: boolean;
   showOverallDimensions: boolean;
   labelPositions?: Point[];
+  sectionsByItem: Map<string, Array<{ start: number; end: number; length: number }>>;
   items: DrawingItem[];
   camera: Camera;
   selectItem: (id: string, additive?: boolean) => void;
@@ -362,7 +366,7 @@ const DrawingShape = memo(function DrawingShape({
       {item.kind === "freehand" ? (
         <FreehandDrawing item={item} />
       ) : item.kind === "wall" || item.kind === "dashed" ? (
-        <LineDrawing item={{ ...item, showDimension: showDimensions && item.showDimension }} items={items} showOverallDimensions={showOverallDimensions} labelPositions={labelPositions} />
+        <LineDrawing item={{ ...item, showDimension: showDimensions && item.showDimension }} items={items} sections={sectionsByItem.get(item.id)} showOverallDimensions={showOverallDimensions} labelPositions={labelPositions} />
       ) : item.kind === "rectangle" ? (
         <RectangleDrawing item={{ ...item, showDimension: showDimensions && item.showDimension }} />
       ) : item.kind === "circle" ? (
@@ -509,6 +513,7 @@ export default function PlanCanvas({
   const [endpointPreview, setEndpointPreview] = useState<DrawingItem[] | null>(null);
   const jointRef = useRef<{ point: Point; prepared: DrawingItem[] } | null>(null);
   const gestureRef = useRef<Gesture | null>(null);
+  const gestureFrameRef = useRef<number | null>(null);
   const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
   const selectionBoxRef = useRef<SelectionBox | null>(null);
   const panRef = useRef<PanGesture | null>(null);
@@ -518,11 +523,35 @@ export default function PlanCanvas({
   const pixelsPerFoot = PIXELS_PER_FOOT * camera.zoom;
   const selectedLine = selectedIds.length === 1 ? items.find((item) => item.id === selectedIds[0] && (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension")) : undefined;
   const displayedItems = endpointPreview ?? items;
-  const lineLabelPositions = useMemo(() => layoutLineLabels(displayedItems, showOverallDimensions), [displayedItems, showOverallDimensions]);
+  const sectionsByItem = useMemo(() => lineSectionsByItem(displayedItems), [displayedItems]);
+  const lineLabelPositions = useMemo(() => layoutLineLabels(displayedItems, showOverallDimensions, sectionsByItem), [displayedItems, sectionsByItem, showOverallDimensions]);
 
   useEffect(() => {
     setEndpointPreview(null);
   }, [selectedIds]);
+
+  function scheduleGesturePreview() {
+    if (gestureFrameRef.current !== null) return;
+    gestureFrameRef.current = window.requestAnimationFrame(() => {
+      gestureFrameRef.current = null;
+      if (gestureRef.current) setGesture(gestureRef.current);
+    });
+  }
+
+  function cancelGesturePreview() {
+    if (gestureFrameRef.current === null) return;
+    window.cancelAnimationFrame(gestureFrameRef.current);
+    gestureFrameRef.current = null;
+  }
+
+  function appendFreehandPoint(gesture: Gesture, point: Point) {
+    if (!gesture.points) return;
+    const relative = { x: point.x - gesture.start.x, y: point.y - gesture.start.y };
+    const last = gesture.points[gesture.points.length - 1];
+    if (distance(last, relative) < 2 / pixelsPerFoot) return;
+    if (gesture.points.length < MAX_FREEHAND_POINTS) gesture.points.push(relative);
+    else gesture.points[gesture.points.length - 1] = relative;
+  }
 
   function endpointAt(event: KonvaEventObject<DragEvent>, joint: { point: Point; prepared: DrawingItem[] }) {
     const position = event.target.position();
@@ -538,7 +567,12 @@ export default function PlanCanvas({
       setSize({ width: entry.contentRect.width, height: entry.contentRect.height });
     });
     observer.observe(hostRef.current);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (gestureFrameRef.current !== null) {
+        window.cancelAnimationFrame(gestureFrameRef.current);
+      }
+    };
   }, []);
 
   function pointerPosition(event: PointerEvent): Point | null {
@@ -577,6 +611,7 @@ export default function PlanCanvas({
     };
     panRef.current = null;
     gestureRef.current = null;
+    cancelGesturePreview();
     setGesture(null);
 
     // A second finger turns an in-progress item drag into a view gesture.
@@ -721,10 +756,10 @@ export default function PlanCanvas({
     const currentGesture = gestureRef.current;
     if (currentGesture?.pointerId === event.pointerId) {
       const current = currentGesture.kind === "freehand" ? point : snap(point).point;
-      const points = currentGesture.points ? [...currentGesture.points, { x: current.x - currentGesture.start.x, y: current.y - currentGesture.start.y }] : undefined;
-      const nextGesture = { ...currentGesture, current, points };
+      if (currentGesture.points) appendFreehandPoint(currentGesture, current);
+      const nextGesture = { ...currentGesture, current };
       gestureRef.current = nextGesture;
-      setGesture(nextGesture);
+      scheduleGesturePreview();
     }
   }
 
@@ -760,13 +795,17 @@ export default function PlanCanvas({
     const currentGesture = gestureRef.current;
     if (!currentGesture || currentGesture.pointerId !== event.pointerId) return;
     const releasePoint = pointerPosition(event);
-    const end = currentGesture.kind === "freehand" || !releasePoint ? currentGesture.current : snap(releasePoint).point;
+    const end = currentGesture.kind === "freehand"
+      ? releasePoint ?? currentGesture.current
+      : releasePoint ? snap(releasePoint).point : currentGesture.current;
+    if (currentGesture.points) appendFreehandPoint(currentGesture, end);
     if (!cancelled && (currentGesture.kind === "freehand" ? (currentGesture.points?.length ?? 0) >= 2 : distance(currentGesture.start, end) > 0.04)) {
       const item = newItem(currentGesture.kind, currentGesture.start, end);
       if (currentGesture.points) item.points = currentGesture.points;
       onCreate(item);
     }
     gestureRef.current = null;
+    cancelGesturePreview();
     setGesture(null);
   }
 
@@ -828,6 +867,7 @@ export default function PlanCanvas({
               showDimensions={showDimensions}
               showOverallDimensions={showOverallDimensions}
               labelPositions={lineLabelPositions.get(item.id)}
+              sectionsByItem={sectionsByItem}
               items={displayedItems}
               camera={camera}
               selectItem={onSelect}

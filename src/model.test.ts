@@ -5,6 +5,7 @@ import {
   itemBounds,
   itemIntersectsSelection,
   lineSections,
+  lineSectionsByItem,
   layoutLineLabels,
   hasFullDimension,
   moveItem,
@@ -17,6 +18,9 @@ import {
   rectangleAsLines,
   snapPoint,
   updateSelection,
+  MAX_DRAWING_ITEMS,
+  MAX_FREEHAND_POINTS,
+  MAX_TOTAL_FREEHAND_POINTS,
 } from "./model";
 import type { DrawingFile } from "./model";
 import { drawingAsSvg } from "./io/drawingFiles";
@@ -251,6 +255,34 @@ describe("plan snapping", () => {
 });
 
 describe("drawing file validation", () => {
+  it("limits imported drawing complexity and rejects duplicate item IDs", () => {
+    const item = newItem("wall", { x: 0, y: 0 }, { x: 1, y: 1 });
+    const file: DrawingFile = { version: 1, name: "Plan", gridFeet: 1, items: [item] };
+    expect(isDrawingFile({ ...file, items: Array.from({ length: MAX_DRAWING_ITEMS + 1 }, (_, index) => ({ ...item, id: `wall-${index}` })) })).toBe(false);
+    expect(isDrawingFile({ ...file, items: [item, item] })).toBe(false);
+
+    const excessiveStroke = {
+      ...newItem("freehand", { x: 0, y: 0 }, { x: 1, y: 1 }),
+      points: Array.from({ length: MAX_FREEHAND_POINTS + 1 }, () => ({ x: 0, y: 0 })),
+    };
+    expect(isDrawingFile({ ...file, items: [excessiveStroke] })).toBe(false);
+
+    const fullStrokes = Array.from({ length: Math.floor(MAX_TOTAL_FREEHAND_POINTS / MAX_FREEHAND_POINTS) + 1 }, (_, index) => ({
+      ...newItem("freehand", { x: 0, y: 0 }, { x: 1, y: 1 }),
+      id: `stroke-${index}`,
+      points: Array.from({ length: MAX_FREEHAND_POINTS }, () => ({ x: 0, y: 0 })),
+    }));
+    expect(isDrawingFile({ ...file, items: fullStrokes })).toBe(false);
+  });
+
+  it("precomputes line sections consistently for each line", () => {
+    const base = newItem("wall", { x: 0, y: 0 }, { x: 10, y: 0 });
+    const branch = newItem("wall", { x: 4, y: 0 }, { x: 4, y: 4 });
+    const sections = lineSectionsByItem([base, branch]);
+    expect(sections.get(base.id)).toEqual(lineSections(base, [base, branch]));
+    expect(sections.get(branch.id)).toEqual(lineSections(branch, [base, branch]));
+  });
+
   it("preserves freehand geometry through save, move, bounds and SVG export", () => {
     const stroke = { ...newItem("freehand", { x: 2, y: 3 }, { x: 2, y: 3 }), points: [{ x: 0, y: 0 }, { x: 4, y: -2 }, { x: 0, y: 0 }] };
     const file: DrawingFile = { version: 1, name: "Sketch", gridFeet: 1, items: [stroke] };

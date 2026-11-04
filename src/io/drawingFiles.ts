@@ -1,4 +1,4 @@
-import { formatFeetInches, itemBounds, lineSections, hasFullDimension, layoutLineLabels } from "../model";
+import { formatFeetInches, itemBounds, lineSections, lineSectionsByItem, hasFullDimension, layoutLineLabels } from "../model";
 import type { DrawingFile, DrawingItem, Point } from "../model";
 
 const EXPORT_SCALE = 72;
@@ -25,7 +25,7 @@ function dimensionLabel(text: string, x: number, y: number) {
     </g>`;
 }
 
-function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDimensions = false, positions?: Map<string, Point[]>): string {
+function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDimensions = false, positions?: Map<string, Point[]>, sectionsByItem?: Map<string, Array<{ start: number; end: number; length: number }>>): string {
   const scale = EXPORT_SCALE;
   const x = item.x * scale;
   const y = item.y * scale;
@@ -44,7 +44,7 @@ function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDim
   if (item.kind === "wall" || item.kind === "dashed") {
     const line = `<line x1="${x}" y1="${y}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="2.5" stroke-linecap="round"${item.kind === "dashed" ? ' stroke-dasharray="9 6"' : ""}/>`;
     if (!item.showDimension) return line;
-    const sections = lineSections(item, items);
+    const sections = sectionsByItem?.get(item.id) ?? lineSections(item, items);
     if (sections.length > 1) {
       const labels = sections.map((section, index) => {
         const midpoint = (section.start + section.end) / 2;
@@ -104,7 +104,8 @@ function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDim
 export function drawingAsSvg(file: DrawingFile, showOverallDimensions = false): string {
   // Export bounds include a little breathing room so labels at the edges aren't clipped.
   const bounds = file.items.map(itemBounds);
-  const positions = layoutLineLabels(file.items, showOverallDimensions);
+  const sectionsByItem = lineSectionsByItem(file.items);
+  const positions = layoutLineLabels(file.items, showOverallDimensions, sectionsByItem);
   for (const labels of positions.values()) {
     for (const point of labels) bounds.push({ left: point.x, top: point.y, right: point.x, bottom: point.y });
   }
@@ -124,7 +125,7 @@ export function drawingAsSvg(file: DrawingFile, showOverallDimensions = false): 
     <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0 0 L8 4 L0 8 Z" fill="#6f8295"/></marker>
   </defs>
   <rect x="${left}" y="${top}" width="${width}" height="${height}" fill="#fff"/>
-  ${file.items.map((item) => renderItem(item, file.items, showOverallDimensions, positions)).join("\n")}
+  ${file.items.map((item) => renderItem(item, file.items, showOverallDimensions, positions, sectionsByItem)).join("\n")}
 </svg>`;
 }
 

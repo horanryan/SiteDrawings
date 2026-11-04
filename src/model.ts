@@ -39,6 +39,11 @@ export interface DrawingFile {
   items: DrawingItem[];
 }
 
+export const MAX_DRAWING_ITEMS = 1_000;
+export const MAX_FREEHAND_POINTS = 10_000;
+export const MAX_TOTAL_FREEHAND_POINTS = 100_000;
+export const MAX_DRAWING_FILE_BYTES = 10 * 1024 * 1024;
+
 export interface SnapOptions {
   grid: boolean;
   objects: boolean;
@@ -249,6 +254,16 @@ export function lineSections(item: DrawingItem, items: DrawingItem[]): Array<{ s
   return cuts.slice(1).map((end, index) => ({ start: cuts[index], end, length: (end - cuts[index]) * length }));
 }
 
+export function lineSectionsByItem(items: DrawingItem[]): Map<string, Array<{ start: number; end: number; length: number }>> {
+  const sections = new Map<string, Array<{ start: number; end: number; length: number }>>();
+  for (const item of items) {
+    if (item.kind === "wall" || item.kind === "dashed") {
+      sections.set(item.id, lineSections(item, items));
+    }
+  }
+  return sections;
+}
+
 export function hasFullDimension(item: DrawingItem, items: DrawingItem[]): boolean {
   const a = { x: item.x, y: item.y };
   const b = { x: item.x2, y: item.y2 };
@@ -256,13 +271,17 @@ export function hasFullDimension(item: DrawingItem, items: DrawingItem[]): boole
 }
 
 // Place line labels in plan coordinates so canvas and exports share the layout.
-export function layoutLineLabels(items: DrawingItem[], showOverallDimensions = false): Map<string, Point[]> {
+export function layoutLineLabels(
+  items: DrawingItem[],
+  showOverallDimensions = false,
+  sectionsByItem = lineSectionsByItem(items),
+): Map<string, Point[]> {
   const positions = new Map<string, Point[]>();
   const occupied: Array<{ x: number; y: number; width: number; height: number }> = [];
   const reserve = (point: Point, text: string) => occupied.push({ ...point, width: Math.max(0.8, text.length * 0.1 + 0.2), height: 0.26 });
   for (const item of items) {
     if (!item.showDimension) continue;
-    const overall = (item.kind === "wall" || item.kind === "dashed") && showOverallDimensions && lineSections(item, items).length > 1 && !hasFullDimension(item, items);
+    const overall = (item.kind === "wall" || item.kind === "dashed") && showOverallDimensions && (sectionsByItem.get(item.id)?.length ?? 0) > 1 && !hasFullDimension(item, items);
     if (item.kind !== "dimension" && !overall) continue;
     const dx = item.x2 - item.x, dy = item.y2 - item.y, length = Math.hypot(dx, dy) || 1;
     reserve({ x: (item.x + item.x2) / 2 - dy / length * 0.38, y: (item.y + item.y2) / 2 + dx / length * 0.38 - 0.16 }, item.label?.trim() || formatFeetInches(length));
@@ -272,7 +291,7 @@ export function layoutLineLabels(items: DrawingItem[], showOverallDimensions = f
     const dx = item.x2 - item.x, dy = item.y2 - item.y;
     const length = Math.hypot(dx, dy);
     if (length < 1e-9) continue;
-    const sections = lineSections(item, items);
+    const sections = sectionsByItem.get(item.id) ?? [];
     const divided = sections.length > 1;
     const labels = (divided ? sections : [{ start: 0, end: 1, length }]).map((section) => {
       const midpoint = (section.start + section.end) / 2;
@@ -469,36 +488,53 @@ export function moveItem(item: DrawingItem, dx: number, dy: number): DrawingItem
 export function isDrawingFile(value: unknown): value is DrawingFile {
   if (!value || typeof value !== "object") return false;
   const file = value as Partial<DrawingFile>;
-  return (
-    file.version === 1 &&
-    typeof file.name === "string" &&
-    file.name.length <= 80 &&
-    typeof file.gridFeet === "number" &&
-    Number.isFinite(file.gridFeet) &&
-    file.gridFeet >= 0.125 &&
-    file.gridFeet <= 1000 &&
-    Array.isArray(file.items) &&
-    file.items.length <= 5000 &&
-    file.items.every(
-      (item) =>
-        item &&
-        typeof item.id === "string" &&
-        ["wall", "dashed", "rectangle", "circle", "dimension", "note", "freehand"].includes(
-          item.kind,
-        ) &&
-        [item.x, item.y, item.x2, item.y2].every(
-          (coordinate) =>
-            typeof coordinate === "number" &&
-            Number.isFinite(coordinate) &&
-            Math.abs(coordinate) <= 1_000_000,
-        ) &&
-        typeof item.color === "string" &&
-        /^#[\da-f]{6}$/i.test(item.color) &&
-        typeof item.showDimension === "boolean" &&
-        (item.kind !== "freehand" || (Array.isArray(item.points) && item.points.length >= 2 && item.points.length <= 100000 && item.points.every((point: Point) => point && [point.x, point.y].every((coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate) && Math.abs(coordinate) <= 2_000_000)))) &&
-        (item.label === undefined || typeof item.label === "string") &&
-        (item.widthLabel === undefined || typeof item.widthLabel === "string") &&
-        (item.heightLabel === undefined || typeof item.heightLabel === "string"),
-    )
-  );
+  if (
+    file.version !== 1 ||
+    typeof file.name !== "string" ||
+    file.name.length > 80 ||
+    typeof file.gridFeet !== "number" ||
+    !Number.isFinite(file.gridFeet) ||
+    file.gridFeet < 0.125 ||
+    file.gridFeet > 1000 ||
+    !Array.isArray(file.items) ||
+    file.items.length > MAX_DRAWING_ITEMS
+  ) return false;
+
+  let totalFreehandPoints = 0;
+  const itemIds = new Set<string>();
+  for (const item of file.items) {
+    if (
+      !item ||
+      typeof item !== "object" ||
+      typeof item.id !== "string" ||
+      item.id.length === 0 ||
+      item.id.length > 128 ||
+      itemIds.has(item.id) ||
+      !["wall", "dashed", "rectangle", "circle", "dimension", "note", "freehand"].includes(item.kind) ||
+      ![item.x, item.y, item.x2, item.y2].every(
+        (coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate) && Math.abs(coordinate) <= 1_000_000,
+      ) ||
+      typeof item.color !== "string" ||
+      !/^#[\da-f]{6}$/i.test(item.color) ||
+      typeof item.showDimension !== "boolean" ||
+      (item.label !== undefined && (typeof item.label !== "string" || item.label.length > 1_000)) ||
+      (item.widthLabel !== undefined && (typeof item.widthLabel !== "string" || item.widthLabel.length > 1_000)) ||
+      (item.heightLabel !== undefined && (typeof item.heightLabel !== "string" || item.heightLabel.length > 1_000))
+    ) return false;
+    itemIds.add(item.id);
+
+    if (item.kind === "freehand") {
+      if (!Array.isArray(item.points) || item.points.length < 2 || item.points.length > MAX_FREEHAND_POINTS) return false;
+      totalFreehandPoints += item.points.length;
+      if (totalFreehandPoints > MAX_TOTAL_FREEHAND_POINTS) return false;
+      if (!item.points.every((point) =>
+        point &&
+        typeof point === "object" &&
+        [point.x, point.y].every(
+          (coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate) && Math.abs(coordinate) <= 2_000_000,
+        ),
+      )) return false;
+    }
+  }
+  return true;
 }

@@ -98,6 +98,7 @@ function TextProperty({
         className="text-input"
         type="text"
         value={text}
+        maxLength={1000}
         placeholder={placeholder}
         onChange={(event) => setText(event.target.value)}
         onBlur={commit}
@@ -117,6 +118,25 @@ export default function Inspector({
   onUpdate,
   onDelete,
 }: InspectorProps) {
+  const [gridText, setGridText] = useState(String(gridFeet));
+  const [gridError, setGridError] = useState("");
+
+  useEffect(() => {
+    setGridText(String(gridFeet));
+    setGridError("");
+  }, [gridFeet]);
+
+  function commitGridFeet() {
+    const next = Number(gridText);
+    if (!Number.isFinite(next) || next < 0.125 || next > 1000) {
+      setGridText(String(gridFeet));
+      setGridError("Enter a value between 0.125 and 1,000 feet.");
+      return;
+    }
+    setGridError("");
+    if (next !== gridFeet) onGridFeetChange(next);
+  }
+
   function changeLineLength(length: number) {
     if (item) onUpdate(resizeLine(item, length));
   }
@@ -175,16 +195,18 @@ export default function Inspector({
               min="0.125"
               max="1000"
               step="0.125"
-              value={gridFeet}
-              onChange={(event) => {
-                const next = Number(event.target.value);
-                if (Number.isFinite(next) && next >= 0.125 && next <= 1000) {
-                  onGridFeetChange(next);
-                }
+              value={gridText}
+              aria-invalid={Boolean(gridError)}
+              aria-describedby={gridError ? "grid-feet-error" : undefined}
+              onChange={(event) => setGridText(event.target.value)}
+              onBlur={commitGridFeet}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur();
               }}
             />
             <span>feet</span>
           </div>
+          {gridError && <p id="grid-feet-error" className="dimension-error" role="alert">{gridError}</p>}
           <p className="field-help">This is the interval used when snapping new points to the grid.</p>
         </section>
 
