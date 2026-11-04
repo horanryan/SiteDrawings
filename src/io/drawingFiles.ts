@@ -1,4 +1,4 @@
-import { formatFeetInches, itemBounds, lineSections, lineSectionsByItem, hasFullDimension, layoutLineLabels } from "../model";
+import { formatFeetInches, itemBounds, lineSections, lineSectionsByItem, hasFullDimension, layoutLineLabels, noteSize, visibleNoteLines, NOTE_FONT_SIZE, NOTE_PADDING, NOTE_LINE_HEIGHT } from "../model";
 import type { DrawingFile, DrawingItem, Point } from "../model";
 
 const EXPORT_SCALE = 72;
@@ -106,7 +106,9 @@ function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDim
     return `${lines}${dimensionLabel(label, (startX + endX) / 2, (startY + endY) / 2 - 0.16 * scale)}`;
   }
 
-  return `<text x="${x}" y="${y}" fill="${color}" font-family="Arial,sans-serif" font-size="18" font-weight="600">${xml(item.label || "Note")}</text>`;
+  const box = noteSize(item);
+  const lines = visibleNoteLines(item).map((line, index) => `<text x="${x + NOTE_PADDING * scale}" y="${y + (NOTE_PADDING + NOTE_FONT_SIZE * 0.85 + index * NOTE_LINE_HEIGHT) * scale}" fill="${color}" font-family="monospace" font-size="${NOTE_FONT_SIZE * scale}">${xml(line)}</text>`).join("");
+  return `<rect x="${x}" y="${y}" width="${box.width * scale}" height="${box.height * scale}" fill="none" stroke="#b9cdd0" stroke-width="1"/>${lines}`;
 }
 
 export function drawingAsSvg(file: DrawingFile, showOverallDimensions = false): string {

@@ -23,6 +23,8 @@ export interface DrawingItem {
   color: string;
   label?: string;
   layerName?: string;
+  noteWidth?: number;
+  noteHeight?: number;
   widthLabel?: string;
   heightLabel?: string;
   showDimension: boolean;
@@ -34,6 +36,44 @@ export interface DrawingFile {
   name: string;
   gridFeet: number;
   items: DrawingItem[];
+}
+
+export const NOTE_MIN_SIZE = 0.25;
+export const NOTE_MAX_SIZE = 1000;
+export const NOTE_DEFAULT_WIDTH = 5;
+export const NOTE_DEFAULT_HEIGHT = 1.5;
+export const NOTE_FONT_SIZE = 0.36;
+export const NOTE_PADDING = 0.08;
+export const NOTE_LINE_HEIGHT = NOTE_FONT_SIZE * 1.2;
+
+// Fixed-width lettering keeps wrapping consistent between canvas and SVG exports.
+export function wrapNoteText(text: string, width: number): string[] {
+  const capacity = Math.max(1, Math.floor((width - NOTE_PADDING * 2) / (NOTE_FONT_SIZE * 0.6)));
+  return text.split(/\r\n|\r|\n/).flatMap((paragraph) => {
+    const lines: string[] = [];
+    let remaining = paragraph;
+    while (remaining.length > capacity) {
+      const breakAt = remaining.lastIndexOf(" ", capacity);
+      const cut = breakAt > 0 ? breakAt : capacity;
+      lines.push(remaining.slice(0, cut).trimEnd());
+      remaining = remaining.slice(cut).trimStart();
+    }
+    lines.push(remaining);
+    return lines;
+  });
+}
+
+export function noteSize(item: DrawingItem): { width: number; height: number } {
+  const width = item.noteWidth ?? NOTE_DEFAULT_WIDTH;
+  // Give older notes without explicit dimensions enough height for their text.
+  const height = item.noteHeight ?? Math.max(NOTE_DEFAULT_HEIGHT, NOTE_PADDING * 2 + wrapNoteText(item.label || "Note", width).length * NOTE_LINE_HEIGHT);
+  return { width, height };
+}
+
+export function visibleNoteLines(item: DrawingItem): string[] {
+  const { width, height } = noteSize(item);
+  const count = Math.max(0, Math.floor((height - NOTE_PADDING * 2 + 1e-9) / NOTE_LINE_HEIGHT));
+  return wrapNoteText(item.label || "Note", width).slice(0, count);
 }
 
 export const MAX_DRAWING_ITEMS = 1_000;
@@ -92,6 +132,10 @@ export function itemIntersectsSelection(item: DrawingItem, a: Point, b: Point): 
     return true;
   };
   if (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" || item.kind === "arrow") return intersects({ x: item.x, y: item.y }, { x: item.x2, y: item.y2 });
+  if (item.kind === "note") {
+    const { width, height } = noteSize(item);
+    return item.x <= right && item.x + width >= left && item.y <= bottom && item.y + height >= top;
+  }
   if (item.kind === "freehand") {
     const points = item.points ?? [];
     return points.slice(1).some((point, index) => intersects({ x: item.x + points[index].x, y: item.y + points[index].y }, { x: item.x + point.x, y: item.y + point.y }));
@@ -138,6 +182,7 @@ export function newItem(
     y2: end.y,
     color: kind === "dashed" ? "#718196" : "#30465c",
     showDimension: kind !== "arrow",
+    ...(kind === "note" ? { noteWidth: NOTE_DEFAULT_WIDTH, noteHeight: NOTE_DEFAULT_HEIGHT } : {}),
   };
 }
 
@@ -285,6 +330,10 @@ export function itemLength(item: DrawingItem): number {
 }
 
 export function itemBounds(item: DrawingItem) {
+  if (item.kind === "note") {
+    const { width, height } = noteSize(item);
+    return { left: item.x, top: item.y, right: item.x + width, bottom: item.y + height };
+  }
   if (item.kind === "circle") {
     const radius = itemLength(item);
     return { left: item.x - radius, top: item.y - radius, right: item.x + radius, bottom: item.y + radius };
@@ -591,6 +640,8 @@ export function isDrawingFile(value: unknown): value is DrawingFile {
       typeof item.color !== "string" ||
       !/^#[\da-f]{6}$/i.test(item.color) ||
       typeof item.showDimension !== "boolean" ||
+      (item.noteWidth !== undefined && (typeof item.noteWidth !== "number" || !Number.isFinite(item.noteWidth) || item.noteWidth < NOTE_MIN_SIZE || item.noteWidth > NOTE_MAX_SIZE)) ||
+      (item.noteHeight !== undefined && (typeof item.noteHeight !== "number" || !Number.isFinite(item.noteHeight) || item.noteHeight < NOTE_MIN_SIZE || item.noteHeight > NOTE_MAX_SIZE)) ||
       (item.layerName !== undefined && (typeof item.layerName !== "string" || item.layerName.length > 80)) ||
       (item.label !== undefined && (typeof item.label !== "string" || item.label.length > 1_000)) ||
       (item.widthLabel !== undefined && (typeof item.widthLabel !== "string" || item.widthLabel.length > 1_000)) ||

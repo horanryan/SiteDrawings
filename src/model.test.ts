@@ -3,6 +3,9 @@ import {
   formatFeetInches,
   isDrawingFile,
   itemBounds,
+  noteSize,
+  wrapNoteText,
+  visibleNoteLines,
   itemIntersectsSelection,
   lineSections,
   lineSectionsByItem,
@@ -90,6 +93,27 @@ describe("plan measurements", () => {
     expect(arrowSvg).not.toContain('<text ');
     const movedJoint = moveJoint(named, { x: 0, y: 0 }, { x: 3, y: 3 });
     expect(movedJoint[2]).toEqual(named[2]);
+  });
+
+  it("wraps notes, keeps older notes visible, and validates saved box dimensions", () => {
+    const oldNote = { ...newItem("note", { x: 2, y: 3 }, { x: 2, y: 3 }), noteWidth: undefined, noteHeight: undefined, label: "First line\n" + "Long text ".repeat(20) };
+    const oldSize = noteSize(oldNote);
+    expect(oldSize.width).toBe(5);
+    expect(visibleNoteLines(oldNote)).toEqual(wrapNoteText(oldNote.label, oldSize.width));
+    expect(itemBounds(oldNote)).toEqual({ left: 2, top: 3, right: 7, bottom: 3 + oldSize.height });
+    expect(itemIntersectsSelection(oldNote, { x: 6, y: 3 }, { x: 8, y: 4 })).toBe(true);
+    const resized = { ...oldNote, noteWidth: 2, noteHeight: 1.5, label: "First line\nSecond line with several words & symbols" };
+    expect(wrapNoteText(resized.label, 2).length).toBeGreaterThan(2);
+    expect(visibleNoteLines(resized).length).toBeLessThan(wrapNoteText(resized.label, 2).length);
+    const file = { version: 1 as const, name: "Notes", gridFeet: 1, items: [resized] };
+    expect(isDrawingFile(file)).toBe(true);
+    expect(isDrawingFile({ ...file, items: [{ ...resized, noteWidth: -1 }] })).toBe(false);
+    expect(isDrawingFile({ ...file, items: [{ ...resized, noteHeight: Infinity }] })).toBe(false);
+    const svg = drawingAsSvg({ ...file, items: [{ ...resized, noteHeight: 8 }] });
+    expect(svg).toContain("First");
+    expect(svg).toContain("Second");
+    expect(svg).toContain("&amp;");
+    expect(svg).toContain('font-family="monospace"');
   });
 
   it("adds and removes individual items from a selection", () => {

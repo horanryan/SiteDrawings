@@ -9,6 +9,14 @@ import {
   itemIntersectsSelection,
   isPolygonTool,
   polygonVertices,
+  noteSize,
+  visibleNoteLines,
+  wrapNoteText,
+  NOTE_LINE_HEIGHT,
+  NOTE_FONT_SIZE,
+  NOTE_PADDING,
+  NOTE_MIN_SIZE,
+  NOTE_MAX_SIZE,
   lineSections,
   lineSectionsByItem,
   layoutLineLabels,
@@ -352,6 +360,7 @@ const DrawingShape = memo(function DrawingShape({
   onUpdate: (item: DrawingItem) => void;
 }) {
   const visualItem = { ...item, color: displayColor(item.color, theme) };
+  const noteBox = item.kind === "note" ? noteSize(item) : null;
   const notePressRef = useRef<{ x: number; y: number } | null>(null);
 
   function snapDrag(event: KonvaEventObject<DragEvent>) {
@@ -426,14 +435,10 @@ const DrawingShape = memo(function DrawingShape({
       ) : item.kind === "arrow" ? (
         <AnnotationArrow item={visualItem} />
       ) : (
-        <Text
-          text={item.label || "Note"}
-          fontFamily="DM Sans, sans-serif"
-          fontSize={0.36}
-          fontStyle="600"
-          fill={visualItem.color}
-          padding={0.08}
-        />
+        <>
+          <Rect width={noteBox?.width} height={noteBox?.height} fill={theme === "dark" ? "rgba(120,200,210,0.04)" : "rgba(30,100,110,0.03)"} stroke={theme === "dark" ? "#46626b" : "#b9cdd0"} strokeWidth={0.02} />
+          <Text text={visibleNoteLines(item).join("\n")} width={noteBox?.width} height={noteBox?.height} fontFamily="monospace" fontSize={NOTE_FONT_SIZE} lineHeight={1.2} wrap="none" fill={visualItem.color} padding={NOTE_PADDING} listening={false} />
+        </>
       )}
       {selected && (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" || item.kind === "arrow" || item.kind === "freehand") && (
         <Line points={item.kind === "freehand" ? (item.points ?? []).flatMap((point) => [point.x, point.y]) : [0, 0, item.x2 - item.x, item.y2 - item.y]} stroke="#3b91ce" strokeWidth={0.14} opacity={0.55} lineCap="round" lineJoin="round" listening={false} />
@@ -455,12 +460,12 @@ const DrawingShape = memo(function DrawingShape({
             width={item.kind === "rectangle"
               ? normalizedRect(item).width + 0.16
               : item.kind === "note"
-                ? Math.max(1, (item.label?.length ?? 4) * 0.2)
+                ? (noteBox?.width ?? 0)
                 : Math.abs(item.x2 - item.x) + 0.16}
             height={item.kind === "rectangle"
               ? normalizedRect(item).height + 0.16
               : item.kind === "note"
-                ? 0.5
+                ? (noteBox?.height ?? 0)
                 : Math.abs(item.y2 - item.y) + 0.16}
             stroke="#3b91ce"
             strokeWidth={0.025}
@@ -568,7 +573,8 @@ export default function PlanCanvas({
   const [gesture, setGesture] = useState<Gesture | null>(null);
   const [endpointPreview, setEndpointPreview] = useState<DrawingItem[] | null>(null);
   const [editingNote, setEditingNote] = useState<{ id: string; text: string } | null>(null);
-  const noteInputRef = useRef<HTMLInputElement>(null);
+  const noteInputRef = useRef<HTMLTextAreaElement>(null);
+  const [noteResizePreview, setNoteResizePreview] = useState<{ id: string; width: number; height: number } | null>(null);
   const cancelNoteRef = useRef(false);
   const jointRef = useRef<{ point: Point; prepared: DrawingItem[] } | null>(null);
   const gestureRef = useRef<Gesture | null>(null);
@@ -581,12 +587,14 @@ export default function PlanCanvas({
   const penPointersRef = useRef(new Set<number>());
   const pixelsPerFoot = PIXELS_PER_FOOT * camera.zoom;
   const selectedLine = selectedIds.length === 1 ? items.find((item) => item.id === selectedIds[0] && (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" || item.kind === "arrow")) : undefined;
-  const displayedItems = endpointPreview ?? items;
+  const displayedItems = useMemo(() => (endpointPreview ?? items).map((item) => noteResizePreview?.id === item.id ? { ...item, noteWidth: noteResizePreview.width, noteHeight: noteResizePreview.height } : item), [endpointPreview, items, noteResizePreview]);
+  const selectedNote = selectedIds.length === 1 ? displayedItems.find((item) => item.id === selectedIds[0] && item.kind === "note") : undefined;
   const sectionsByItem = useMemo(() => lineSectionsByItem(displayedItems), [displayedItems]);
   const lineLabelPositions = useMemo(() => layoutLineLabels(displayedItems, showOverallDimensions, sectionsByItem), [displayedItems, sectionsByItem, showOverallDimensions]);
 
   useEffect(() => {
     setEndpointPreview(null);
+    setNoteResizePreview(null);
   }, [selectedIds]);
 
   useEffect(() => {
@@ -602,7 +610,10 @@ export default function PlanCanvas({
     if (!editingNote) return;
     const item = items.find((entry) => entry.id === editingNote.id);
     if (!cancelNoteRef.current && item && (item.label ?? "") !== editingNote.text) {
-      onUpdate({ ...item, label: editingNote.text });
+      // Grow a note after editing so newly entered lines are not silently hidden.
+      const size = noteSize(item);
+      const requiredHeight = NOTE_PADDING * 2 + wrapNoteText(editingNote.text || "Note", size.width).length * NOTE_LINE_HEIGHT;
+      onUpdate({ ...item, label: editingNote.text, noteHeight: Math.min(NOTE_MAX_SIZE, Math.max(size.height, requiredHeight)) });
     }
     cancelNoteRef.current = false;
     setEditingNote(null);
@@ -989,6 +1000,16 @@ export default function PlanCanvas({
             </Group>
           )}
           {selectionBox && <Rect x={Math.min(selectionBox.start.x, selectionBox.current.x)} y={Math.min(selectionBox.start.y, selectionBox.current.y)} width={Math.abs(selectionBox.current.x - selectionBox.start.x)} height={Math.abs(selectionBox.current.y - selectionBox.start.y)} fill="rgba(59, 145, 206, 0.12)" stroke="#3b91ce" strokeWidth={1 / pixelsPerFoot} dash={[5 / pixelsPerFoot, 4 / pixelsPerFoot]} listening={false} />}
+          {selectedNote && !editingNote && (() => {
+            const { width, height } = noteSize(selectedNote);
+            const clamp = (value: number) => Math.max(NOTE_MIN_SIZE, Math.min(NOTE_MAX_SIZE, value));
+            return <Rect x={selectedNote.x + width} y={selectedNote.y + height} width={12 / pixelsPerFoot} height={12 / pixelsPerFoot} offsetX={6 / pixelsPerFoot} offsetY={6 / pixelsPerFoot} fill="white" stroke="#168c9a" strokeWidth={2 / pixelsPerFoot} cornerRadius={2 / pixelsPerFoot} draggable
+              onPointerDown={(event) => { event.cancelBubble = true; }}
+              onMouseDown={(event) => { event.cancelBubble = true; }}
+              onTouchStart={(event) => { event.cancelBubble = true; }}
+              onDragMove={(event) => { event.cancelBubble = true; const width = clamp(event.target.x() - selectedNote.x), height = clamp(event.target.y() - selectedNote.y); event.target.position({ x: selectedNote.x + width, y: selectedNote.y + height }); setNoteResizePreview({ id: selectedNote.id, width, height }); }}
+              onDragEnd={(event) => { event.cancelBubble = true; const width = clamp(event.target.x() - selectedNote.x), height = clamp(event.target.y() - selectedNote.y); if (!event.evt.type.includes("cancel")) onUpdate({ ...selectedNote, noteWidth: width, noteHeight: height }); setNoteResizePreview(null); }} />;
+          })()}
           {activeTool === "select" && selectedLine && (["start", "end"] as const).map((endpoint) => {
             const shown = displayedItems.find((item) => item.id === selectedLine.id) ?? selectedLine;
             return <Circle key={`${selectedLine.id}-${endpoint}`} x={endpoint === "start" ? shown.x : shown.x2} y={endpoint === "start" ? shown.y : shown.y2} radius={6 / pixelsPerFoot} hitStrokeWidth={16 / pixelsPerFoot} fill="white" stroke="#287bc0" strokeWidth={2 / pixelsPerFoot} draggable
@@ -1016,9 +1037,12 @@ export default function PlanCanvas({
       {editingNote && (() => {
         const note = items.find((item) => item.id === editingNote.id);
         if (!note) return null;
-        const left = Math.max(0, Math.min(size.width - Math.min(240, size.width), camera.x + note.x * pixelsPerFoot));
-        const top = Math.max(0, Math.min(size.height - 38, camera.y + note.y * pixelsPerFoot));
-        return <input ref={noteInputRef} className="canvas-note-input" aria-label="Note text" placeholder="Type a note…" maxLength={1000} value={editingNote.text} style={{ left, top }} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => setEditingNote({ ...editingNote, text: event.target.value })} onBlur={finishNoteEdit} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelNoteRef.current = true; event.currentTarget.blur(); } }} />;
+        const box = noteSize(note);
+        const width = Math.min(size.width, Math.max(120, box.width * pixelsPerFoot));
+        const height = Math.min(size.height, Math.max(64, box.height * pixelsPerFoot));
+        const left = Math.max(0, Math.min(size.width - width, camera.x + note.x * pixelsPerFoot));
+        const top = Math.max(0, Math.min(size.height - height, camera.y + note.y * pixelsPerFoot));
+        return <textarea ref={noteInputRef} className="canvas-note-input" aria-label="Note text" placeholder="Type a note…" maxLength={1000} value={editingNote.text} style={{ left, top, width, height, fontSize: Math.max(12, Math.min(32, NOTE_FONT_SIZE * pixelsPerFoot)) }} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => setEditingNote({ ...editingNote, text: event.target.value })} onBlur={finishNoteEdit} onKeyDown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.blur(); } else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelNoteRef.current = true; event.currentTarget.blur(); } }} />;
       })()}
       {items.length === 0 && !gesture && activeTool === "select" && (
         <div className="canvas-empty">

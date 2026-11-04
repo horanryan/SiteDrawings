@@ -4,6 +4,11 @@ import {
   distance,
   formatFeetInches,
   itemLength,
+  noteSize,
+  wrapNoteText,
+  visibleNoteLines,
+  NOTE_MIN_SIZE,
+  NOTE_MAX_SIZE,
   parseFeetInches,
   resizeLine,
 } from "../model";
@@ -22,10 +27,14 @@ function DimensionInput({
   label,
   value,
   onCommit,
+  min = 0,
+  max = Infinity,
 }: {
   label: string;
   value: number;
   onCommit: (next: number) => void;
+  min?: number;
+  max?: number;
 }) {
   const [text, setText] = useState(formatFeetInches(value));
   const [error, setError] = useState("");
@@ -37,8 +46,8 @@ function DimensionInput({
 
   function commit() {
     const parsed = parseFeetInches(text);
-    if (parsed === null || !Number.isFinite(parsed) || parsed <= 0) {
-      setError("Enter a positive length, like 10′ 6″.");
+    if (parsed === null || !Number.isFinite(parsed) || parsed <= 0 || parsed < min || parsed > max) {
+      setError(min > 0 ? `Enter a length between ${formatFeetInches(min)} and ${formatFeetInches(max)}.` : "Enter a positive length, like 10′ 6″.");
       return;
     }
     setError("");
@@ -254,6 +263,12 @@ export default function Inspector({
                   />
                 </>
               ) : null}
+              {item.kind === "note" ? <>
+                <DimensionInput label="Width" value={noteSize(item).width} min={NOTE_MIN_SIZE} max={NOTE_MAX_SIZE} onCommit={(noteWidth) => onUpdate({ ...item, noteWidth })} />
+                <DimensionInput label="Height" value={noteSize(item).height} min={NOTE_MIN_SIZE} max={NOTE_MAX_SIZE} onCommit={(noteHeight) => onUpdate({ ...item, noteHeight })} />
+                <p className="field-help">Click the note to edit its text. Drag the lower-right handle to resize.</p>
+                {visibleNoteLines(item).length < wrapNoteText(item.label || "Note", noteSize(item).width).length && <p className="dimension-error" role="status">Some text is hidden. Increase the note height to show it.</p>}
+              </> : null}
               {item.kind === "circle" ? (
                 <DimensionInput
                   label="Diameter"
@@ -294,11 +309,11 @@ export default function Inspector({
                     onCommit={(heightLabel) => onUpdate({ ...item, heightLabel })}
                   />
                 </>
-              ) : item.kind !== "freehand" && item.kind !== "arrow" ? (
+              ) : item.kind !== "freehand" && item.kind !== "arrow" && item.kind !== "note" ? (
                 <TextProperty
-                  label={item.kind === "note" ? "Note" : "Dimension label"}
+                  label="Dimension label"
                   value={item.label ?? ""}
-                  placeholder={item.kind === "note" ? "Enter a note" : "Automatic"}
+                  placeholder="Automatic"
                   onCommit={(label) => onUpdate({ ...item, label })}
                 />
               ) : null}
