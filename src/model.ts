@@ -45,10 +45,11 @@ export const NOTE_DEFAULT_HEIGHT = 1.5;
 export const NOTE_FONT_SIZE = 0.36;
 export const NOTE_PADDING = 0.08;
 export const NOTE_LINE_HEIGHT = NOTE_FONT_SIZE * 1.2;
+export const NOTE_CHARACTER_WIDTH = NOTE_FONT_SIZE * 0.65;
 
 // Fixed-width lettering keeps wrapping consistent between canvas and SVG exports.
 export function wrapNoteText(text: string, width: number): string[] {
-  const capacity = Math.max(1, Math.floor((width - NOTE_PADDING * 2) / (NOTE_FONT_SIZE * 0.6)));
+  const capacity = Math.max(1, Math.floor((width - NOTE_PADDING * 2) / NOTE_CHARACTER_WIDTH));
   return text.split(/\r\n|\r|\n/).flatMap((paragraph) => {
     const lines: string[] = [];
     let remaining = paragraph;
@@ -65,15 +66,14 @@ export function wrapNoteText(text: string, width: number): string[] {
 
 export function noteSize(item: DrawingItem): { width: number; height: number } {
   const width = item.noteWidth ?? NOTE_DEFAULT_WIDTH;
-  // Give older notes without explicit dimensions enough height for their text.
-  const height = item.noteHeight ?? Math.max(NOTE_DEFAULT_HEIGHT, NOTE_PADDING * 2 + wrapNoteText(item.label || "Note", width).length * NOTE_LINE_HEIGHT);
+  // Always fit all lines, including in older or imported undersized notes.
+  const requiredHeight = NOTE_PADDING * 2 + wrapNoteText(item.label || "Note", width).length * NOTE_LINE_HEIGHT;
+  const height = Math.max(item.noteHeight ?? NOTE_DEFAULT_HEIGHT, requiredHeight);
   return { width, height };
 }
 
 export function visibleNoteLines(item: DrawingItem): string[] {
-  const { width, height } = noteSize(item);
-  const count = Math.max(0, Math.floor((height - NOTE_PADDING * 2 + 1e-9) / NOTE_LINE_HEIGHT));
-  return wrapNoteText(item.label || "Note", width).slice(0, count);
+  return wrapNoteText(item.label || "Note", noteSize(item).width);
 }
 
 export const MAX_DRAWING_ITEMS = 1_000;

@@ -104,15 +104,17 @@ describe("plan measurements", () => {
     expect(itemIntersectsSelection(oldNote, { x: 6, y: 3 }, { x: 8, y: 4 })).toBe(true);
     const resized = { ...oldNote, noteWidth: 2, noteHeight: 1.5, label: "First line\nSecond line with several words & symbols" };
     expect(wrapNoteText(resized.label, 2).length).toBeGreaterThan(2);
-    expect(visibleNoteLines(resized).length).toBeLessThan(wrapNoteText(resized.label, 2).length);
+    expect(visibleNoteLines(resized)).toEqual(wrapNoteText(resized.label, 2));
+    expect(noteSize(resized).height).toBeGreaterThan(resized.noteHeight);
     const file = { version: 1 as const, name: "Notes", gridFeet: 1, items: [resized] };
     expect(isDrawingFile(file)).toBe(true);
     expect(isDrawingFile({ ...file, items: [{ ...resized, noteWidth: -1 }] })).toBe(false);
     expect(isDrawingFile({ ...file, items: [{ ...resized, noteHeight: Infinity }] })).toBe(false);
-    const svg = drawingAsSvg({ ...file, items: [{ ...resized, noteHeight: 8 }] });
+    const svg = drawingAsSvg(file);
     expect(svg).toContain("First");
     expect(svg).toContain("Second");
     expect(svg).toContain("&amp;");
+    expect(svg).toContain("symbols");
     expect(svg).toContain('font-family="monospace"');
   });
 

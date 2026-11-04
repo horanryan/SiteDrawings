@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Arrow, Circle, Group, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
@@ -13,6 +13,7 @@ import {
   visibleNoteLines,
   wrapNoteText,
   NOTE_LINE_HEIGHT,
+  NOTE_CHARACTER_WIDTH,
   NOTE_FONT_SIZE,
   NOTE_PADDING,
   NOTE_MIN_SIZE,
@@ -437,7 +438,7 @@ const DrawingShape = memo(function DrawingShape({
       ) : (
         <>
           <Rect width={noteBox?.width} height={noteBox?.height} fill={theme === "dark" ? "rgba(120,200,210,0.04)" : "rgba(30,100,110,0.03)"} stroke={theme === "dark" ? "#46626b" : "#b9cdd0"} strokeWidth={0.02} />
-          <Text text={visibleNoteLines(item).join("\n")} width={noteBox?.width} height={noteBox?.height} fontFamily="monospace" fontSize={NOTE_FONT_SIZE} lineHeight={1.2} wrap="none" fill={visualItem.color} padding={NOTE_PADDING} listening={false} />
+          <Text text={visibleNoteLines(item).join("\n")} fontFamily="monospace" fontSize={NOTE_FONT_SIZE} lineHeight={1.2} wrap="none" fill={visualItem.color} padding={NOTE_PADDING} listening={false} />
         </>
       )}
       {selected && (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" || item.kind === "arrow" || item.kind === "freehand") && (
@@ -574,6 +575,7 @@ export default function PlanCanvas({
   const [endpointPreview, setEndpointPreview] = useState<DrawingItem[] | null>(null);
   const [editingNote, setEditingNote] = useState<{ id: string; text: string } | null>(null);
   const noteInputRef = useRef<HTMLTextAreaElement>(null);
+  const [noteInputHeight, setNoteInputHeight] = useState(0);
   const [noteResizePreview, setNoteResizePreview] = useState<{ id: string; width: number; height: number } | null>(null);
   const cancelNoteRef = useRef(false);
   const jointRef = useRef<{ point: Point; prepared: DrawingItem[] } | null>(null);
@@ -601,7 +603,15 @@ export default function PlanCanvas({
     if (editingNote) noteInputRef.current?.focus();
   }, [editingNote?.id]);
 
+  useLayoutEffect(() => {
+    const input = noteInputRef.current;
+    if (editingNote && input && input.scrollHeight > input.clientHeight) {
+      setNoteInputHeight(input.scrollHeight + 2);
+    }
+  }, [editingNote?.text, editingNote?.id, size.width, size.height, camera.zoom]);
+
   function beginNoteEdit(item: DrawingItem) {
+    setNoteInputHeight(0);
     cancelNoteRef.current = false;
     setEditingNote({ id: item.id, text: item.label ?? "" });
   }
@@ -1007,8 +1017,8 @@ export default function PlanCanvas({
               onPointerDown={(event) => { event.cancelBubble = true; }}
               onMouseDown={(event) => { event.cancelBubble = true; }}
               onTouchStart={(event) => { event.cancelBubble = true; }}
-              onDragMove={(event) => { event.cancelBubble = true; const width = clamp(event.target.x() - selectedNote.x), height = clamp(event.target.y() - selectedNote.y); event.target.position({ x: selectedNote.x + width, y: selectedNote.y + height }); setNoteResizePreview({ id: selectedNote.id, width, height }); }}
-              onDragEnd={(event) => { event.cancelBubble = true; const width = clamp(event.target.x() - selectedNote.x), height = clamp(event.target.y() - selectedNote.y); if (!event.evt.type.includes("cancel")) onUpdate({ ...selectedNote, noteWidth: width, noteHeight: height }); setNoteResizePreview(null); }} />;
+              onDragMove={(event) => { event.cancelBubble = true; const width = clamp(event.target.x() - selectedNote.x); const height = noteSize({ ...selectedNote, noteWidth: width, noteHeight: clamp(event.target.y() - selectedNote.y) }).height; event.target.position({ x: selectedNote.x + width, y: selectedNote.y + height }); setNoteResizePreview({ id: selectedNote.id, width, height }); }}
+              onDragEnd={(event) => { event.cancelBubble = true; const width = clamp(event.target.x() - selectedNote.x); const height = noteSize({ ...selectedNote, noteWidth: width, noteHeight: clamp(event.target.y() - selectedNote.y) }).height; if (!event.evt.type.includes("cancel")) onUpdate({ ...selectedNote, noteWidth: width, noteHeight: height }); setNoteResizePreview(null); }} />;
           })()}
           {activeTool === "select" && selectedLine && (["start", "end"] as const).map((endpoint) => {
             const shown = displayedItems.find((item) => item.id === selectedLine.id) ?? selectedLine;
@@ -1037,12 +1047,16 @@ export default function PlanCanvas({
       {editingNote && (() => {
         const note = items.find((item) => item.id === editingNote.id);
         if (!note) return null;
-        const box = noteSize(note);
+        const box = noteSize({ ...note, label: editingNote.text });
         const width = Math.min(size.width, Math.max(120, box.width * pixelsPerFoot));
-        const height = Math.min(size.height, Math.max(64, box.height * pixelsPerFoot));
+        const fontSize = Math.max(12, Math.min(32, NOTE_FONT_SIZE * pixelsPerFoot));
+        const editWidth = Math.max(NOTE_MIN_SIZE, ((width - 8) / (fontSize * 0.6)) * NOTE_CHARACTER_WIDTH + NOTE_PADDING * 2);
+        const editLines = wrapNoteText(editingNote.text || "Note", editWidth).length;
+        const height = Math.max(64, box.height * pixelsPerFoot, editLines * fontSize * 1.2 + 8, noteInputHeight);
         const left = Math.max(0, Math.min(size.width - width, camera.x + note.x * pixelsPerFoot));
-        const top = Math.max(0, Math.min(size.height - height, camera.y + note.y * pixelsPerFoot));
-        return <textarea ref={noteInputRef} className="canvas-note-input" aria-label="Note text" placeholder="Type a note…" maxLength={1000} value={editingNote.text} style={{ left, top, width, height, fontSize: Math.max(12, Math.min(32, NOTE_FONT_SIZE * pixelsPerFoot)) }} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => setEditingNote({ ...editingNote, text: event.target.value })} onBlur={finishNoteEdit} onKeyDown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.blur(); } else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelNoteRef.current = true; event.currentTarget.blur(); } }} />;
+        // Keep the end of a very tall note in view without giving it an internal scrollbar.
+        const top = Math.min(Math.max(0, camera.y + note.y * pixelsPerFoot), size.height - height);
+        return <textarea ref={noteInputRef} className="canvas-note-input" aria-label="Note text" placeholder="Type a note…" maxLength={1000} value={editingNote.text} style={{ left, top, width, height, fontSize }} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => setEditingNote({ ...editingNote, text: event.target.value })} onBlur={finishNoteEdit} onKeyDown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.blur(); } else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelNoteRef.current = true; event.currentTarget.blur(); } }} />;
       })()}
       {items.length === 0 && !gesture && activeTool === "select" && (
         <div className="canvas-empty">
