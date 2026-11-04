@@ -75,10 +75,12 @@ function TextProperty({
   value,
   placeholder,
   onCommit,
+  maxLength = 1000,
 }: {
   label: string;
   value: string;
   placeholder: string;
+  maxLength?: number;
   onCommit: (next: string) => void;
 }) {
   const [text, setText] = useState(value);
@@ -98,7 +100,7 @@ function TextProperty({
         className="text-input"
         type="text"
         value={text}
-        maxLength={1000}
+        maxLength={maxLength}
         placeholder={placeholder}
         onChange={(event) => setText(event.target.value)}
         onBlur={commit}
@@ -229,6 +231,8 @@ export default function Inspector({
                 <span className="selected-dot" style={{ backgroundColor: item.color }} />
               </div>
 
+              <TextProperty label="Layer name" value={item.layerName ?? ""} placeholder="Layer name" maxLength={80} onCommit={(layerName) => onUpdate({ ...item, layerName: layerName.trim() })} />
+
               {item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" ? (
                 <DimensionInput
                   label="Length"
@@ -290,7 +294,7 @@ export default function Inspector({
                     onCommit={(heightLabel) => onUpdate({ ...item, heightLabel })}
                   />
                 </>
-              ) : item.kind !== "freehand" ? (
+              ) : item.kind !== "freehand" && item.kind !== "arrow" ? (
                 <TextProperty
                   label={item.kind === "note" ? "Note" : "Dimension label"}
                   value={item.label ?? ""}
@@ -299,7 +303,7 @@ export default function Inspector({
                 />
               ) : null}
 
-              {item.kind !== "note" && item.kind !== "freehand" && (
+              {item.kind !== "note" && item.kind !== "freehand" && item.kind !== "arrow" && (
                 <label className="check-row">
                   <input
                     type="checkbox"
@@ -329,8 +333,11 @@ export default function Inspector({
             ["R", "Rectangle"],
             ["C", "Circle"],
             ["M", "Dimension"],
+            ["A", "Arrow annotation"],
             ["N", "Add note"],
             ["F", "Freehand"],
+            ["Ctrl+D", "Duplicate selection"],
+            ["Ctrl+A", "Select all"],
           ].map(([key, description]) => (
             <div className="guide-row" key={key}>
               <kbd>{key}</kbd>

@@ -1,6 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import {
   CircleHelp,
+  Shapes,
+  Triangle,
+  Diamond,
+  Pentagon,
+  Hexagon,
+  Octagon,
+  Star,
+  ArrowRight,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Layers,
+  Moon,
+  Sun,
+  Trash2,
   Circle,
   Download,
   FileImage,
@@ -22,25 +37,33 @@ import {
   X,
 } from "lucide-react";
 import Inspector from "./components/Inspector";
-import logo from "./assets/rh-red.svg";
+import logo from "./assets/rh-trace.svg";
 import PlanCanvas, { DEFAULT_CAMERA } from "./components/PlanCanvas";
 import {
   isDrawingFile,
+  assignLayerNames,
+  hasNewLineOverlap,
   itemBounds,
+  itemLength,
+  formatFeetInches,
+  newItem,
+  moveItem,
   MAX_DRAWING_FILE_BYTES,
   MAX_DRAWING_ITEMS,
   MAX_TOTAL_FREEHAND_POINTS,
   rectangleAsLines,
+  polygonAsLines,
   updateSelection,
 } from "./model";
 import { drawingAsPdf } from "./io/drawingPdf";
-import type { DrawingFile, DrawingItem, DrawingTool, Point } from "./model";
+import type { DrawingFile, DrawingItem, DrawingTool, Point, PolygonTool } from "./model";
 import {
   downloadFile,
   drawingAsSvg,
   safeFileName,
 } from "./io/drawingFiles";
 
+// Keep the original key so plans saved before the TRACE rename remain available.
 const STORAGE_PREFIX = "sitesketch.drawing.v2";
 
 const tools: Array<{
@@ -52,11 +75,21 @@ const tools: Array<{
   { id: "select", label: "Select", shortcut: "V", icon: MousePointer2 },
   { id: "wall", label: "Line", shortcut: "L", icon: MoveUpRight },
   { id: "dashed", label: "Dashed", shortcut: "D", icon: MoveUpRight },
-  { id: "rectangle", label: "Rectangle", shortcut: "R", icon: Square },
-  { id: "circle", label: "Circle", shortcut: "C", icon: Circle },
   { id: "dimension", label: "Dimension", shortcut: "M", icon: Ruler },
+  { id: "arrow", label: "Arrow", shortcut: "A", icon: ArrowRight },
   { id: "note", label: "Note", shortcut: "N", icon: Type },
   { id: "freehand", label: "Freehand", shortcut: "F", icon: Pencil },
+ ];
+
+const shapeTools: Array<{ id: DrawingTool; label: string; shortcut: string; icon: typeof MousePointer2 }> = [
+  { id: "rectangle", label: "Rectangle", shortcut: "R", icon: Square },
+  { id: "circle", label: "Circle", shortcut: "C", icon: Circle },
+  { id: "triangle", label: "Triangle", shortcut: "", icon: Triangle },
+  { id: "diamond", label: "Diamond", shortcut: "", icon: Diamond },
+  { id: "pentagon", label: "Pentagon", shortcut: "", icon: Pentagon },
+  { id: "hexagon", label: "Hexagon", shortcut: "", icon: Hexagon },
+  { id: "octagon", label: "Octagon", shortcut: "", icon: Octagon },
+  { id: "star", label: "Star", shortcut: "", icon: Star },
 ];
 
 function storageKey() {
@@ -180,13 +213,19 @@ function App() {
       };
     }
   });
-  const [items, setItems] = useState(initialDrawing.file.items);
+  const [items, setItems] = useState(() => assignLayerNames(initialDrawing.file.items));
   const itemsRef = useRef(items);
   const autosaveAllowed = useRef(!initialDrawing.error);
   const [projectName, setProjectName] = useState(initialDrawing.file.name);
   const [gridFeet, setGridFeet] = useState(initialDrawing.file.gridFeet);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [activeTool, setActiveTool] = useState<DrawingTool>("select");
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    try { return localStorage.getItem("trace.theme") === "dark" ? "dark" : "light"; }
+    catch { return "light"; }
+  });
+  const [layersOpen, setLayersOpen] = useState(true);
+  const [shapeMenu, setShapeMenu] = useState<{ left: number; top: number } | null>(null);
   const [gridSnap, setGridSnap] = useState(true);
   const [objectSnap, setObjectSnap] = useState(true);
   const [showDimensions, setShowDimensions] = useState(true);
@@ -207,6 +246,10 @@ function App() {
 
   const selectedItem = selectedIds.length === 1 ? items.find((item) => item.id === selectedIds[0]) : undefined;
   const context = getJobContext();
+
+  useEffect(() => {
+    try { localStorage.setItem("trace.theme", theme); } catch { /* Appearance still works for this session. */ }
+  }, [theme]);
 
   useEffect(() => {
     itemsRef.current = items;
@@ -252,6 +295,13 @@ function App() {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
         saveNow();
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        duplicateSelected();
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        setSelectedIds(itemsRef.current.map((item) => item.id));
+        setActiveTool("select");
       } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
         event.shiftKey ? redo() : undo();
@@ -264,11 +314,12 @@ function App() {
         setActiveTool("select");
         setExportOpen(false);
         setConnectOpen(false);
+        setShapeMenu(null);
       } else {
-        const tool = tools.find(
+        const tool = [...tools, ...shapeTools].find(
           (entry) => entry.shortcut.toLowerCase() === event.key.toLowerCase(),
         );
-        if (tool) setActiveTool(tool.id);
+        if (tool) { setActiveTool(tool.id); setShapeMenu(null); }
       }
     }
 
@@ -303,8 +354,13 @@ function App() {
   }
 
   function commitItems(next: DrawingItem[]) {
+    next = assignLayerNames(next);
     const previous = itemsRef.current;
     if (JSON.stringify(previous) === JSON.stringify(next)) return false;
+    if (hasNewLineOverlap(previous, next)) {
+      showToast("A line already occupies that space. Connect to it or draw beside it.");
+      return false;
+    }
     if (!isDrawingFile({ version: 1, name: projectName.trim() || "Untitled plan", gridFeet, items: next })) {
       showToast(`This drawing reached its supported limit of ${MAX_DRAWING_ITEMS} items or ${MAX_TOTAL_FREEHAND_POINTS.toLocaleString()} freehand points.`);
       return false;
@@ -329,6 +385,12 @@ function App() {
     setSelectedIds(created.length === 1 ? [created[0].id] : []);
   }
 
+  function createPolygon(kind: PolygonTool, start: Point, end: Point) {
+    const created = polygonAsLines(kind, start, end);
+    if (!created.length) { showToast("Draw a shape with both width and height."); return; }
+    if (commitItems([...itemsRef.current, ...created])) setSelectedIds([]);
+  }
+
   function updateItem(updated: DrawingItem) {
     commitItems(itemsRef.current.map((item) => item.id === updated.id ? updated : item));
   }
@@ -337,6 +399,33 @@ function App() {
     if (!selectedIds.length) return;
     commitItems(itemsRef.current.filter((item) => !selectedIds.includes(item.id)));
     setSelectedIds([]);
+  }
+
+  function duplicateSelected() {
+    const selected = itemsRef.current.filter((item) => selectedIds.includes(item.id));
+    if (!selected.length) return;
+    for (const [dx, dy] of [[1, 2], [2, -1], [-1, -2], [-2, 1]]) {
+      const copies = selected.map((item) => ({
+        ...moveItem(item, dx * gridFeet, dy * gridFeet),
+        layerName: undefined,
+        id: newItem(item.kind, { x: item.x, y: item.y }, { x: item.x2, y: item.y2 }).id,
+      }));
+      const next = [...itemsRef.current, ...copies];
+      if (hasNewLineOverlap(itemsRef.current, next)) continue;
+      if (commitItems(next)) { setSelectedIds(copies.map((item) => item.id)); setActiveTool("select"); }
+      return;
+    }
+    showToast("Couldn't find a clear position for the copy.");
+  }
+
+  function moveLayer(direction: -1 | 1) {
+    if (selectedIds.length !== 1) return;
+    const next = [...itemsRef.current];
+    const index = next.findIndex((item) => item.id === selectedIds[0]);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    commitItems(next);
   }
 
   function undo() {
@@ -441,12 +530,13 @@ function App() {
       }
       const parsed: unknown = JSON.parse(await file.text());
       if (!isDrawingFile(parsed)) {
-        throw new Error("This file is not a supported SiteSketch drawing.");
+        throw new Error("This file is not a supported TRACE drawing.");
       }
       undoStack.current = [];
       redoStack.current = [];
-      itemsRef.current = parsed.items;
-      setItems(parsed.items);
+      const namedItems = assignLayerNames(parsed.items);
+      itemsRef.current = namedItems;
+      setItems(namedItems);
       setProjectName(parsed.name);
       setGridFeet(parsed.gridFeet);
       autosaveAllowed.current = true;
@@ -469,13 +559,13 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-theme={theme}>
       <header className="topbar">
-        <a className="brand" href="#" aria-label="SiteSketch home">
+        <a className="brand" href="#" aria-label="TRACE Site Drawings">
           <span className="brand-mark"><img src={logo} alt="" /></span>
           <span className="brand-copy">
-            <strong>SiteSketch</strong>
-            <small>CONSTRUCTION PLAN STUDIO</small>
+            <strong>TRACE</strong>
+            <small>SITE DRAWINGS</small>
           </span>
         </a>
         <div className="project-title">
@@ -492,6 +582,9 @@ function App() {
           {context && <span className="job-context" title={context}>{context}</span>}
         </div>
         <div className="top-actions">
+          <button className="icon-button theme-button" onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"} title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}>
+            {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
+          </button>
           <button className="icon-button" title="Undo (Ctrl+Z)" aria-label="Undo" onClick={undo} disabled={!undoStack.current.length}>
             <Undo2 size={18} />
           </button>
@@ -530,15 +623,18 @@ function App() {
         <aside className="tool-rail" aria-label="Drawing tools">
           <span className="tool-caption">TOOLS</span>
           <div className="tool-group">
-            {tools.map((tool) => (
-              <ToolButton
-                key={tool.id}
-                {...tool}
-                active={activeTool === tool.id}
-                onClick={setActiveTool}
-              />
-            ))}
+            {tools.map((tool) => <span className="tool-slot" key={tool.id}>
+              <ToolButton {...tool} active={activeTool === tool.id} onClick={(id) => { setActiveTool(id); setShapeMenu(null); }} />
+              {tool.id === "dashed" && <>
+                <button className={`tool-button shapes-toggle ${shapeTools.some((shape) => shape.id === activeTool) ? "active" : ""}`} aria-label="Shapes" aria-expanded={Boolean(shapeMenu)} aria-haspopup="true" title="Shapes" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setShapeMenu(shapeMenu ? null : { left: rect.right + 8, top: Math.max(8, Math.min(rect.top, window.innerHeight - 460)) }); }}><Shapes size={19} strokeWidth={1.7} /><span>Shapes</span></button>
+                {shapeMenu && <div className="shapes-menu" style={{ left: shapeMenu.left, top: shapeMenu.top }} role="group" aria-label="Choose a shape">
+                  <div className="shapes-heading">SHAPES <button aria-label="Close shapes" onClick={() => setShapeMenu(null)}><X size={15} /></button></div>
+                  {shapeTools.map(({ id, label, shortcut, icon: Icon }) => <button key={id} className={`shape-option ${activeTool === id ? "selected" : ""}`} aria-pressed={activeTool === id} onClick={() => { setActiveTool(id); setShapeMenu(null); }}><Icon size={17} /><span>{label}</span>{shortcut && <kbd>{shortcut}</kbd>}</button>)}
+                </div>}
+              </>}
+            </span>)}
           </div>
+          <button className={`tool-button layers-toggle ${layersOpen ? "active" : ""}`} aria-pressed={layersOpen} title="Toggle layers" onClick={() => setLayersOpen(!layersOpen)}><Layers size={19} strokeWidth={1.7} /><span>Layers</span></button>
           <div className="rail-bottom" hidden>
             <button
               className="tool-button help-tool"
@@ -552,10 +648,25 @@ function App() {
           </div>
         </aside>
 
+        {layersOpen && <aside className="layers-panel" aria-label="Drawing layers">
+          <div className="layers-heading"><div><span className="eyebrow">YOUR PLAN</span><h2>Layers <span>{items.length}</span></h2></div><button className="layers-close" aria-label="Close layers" onClick={() => setLayersOpen(false)}><X size={17} /></button></div>
+          <div className="layers-actions" aria-label="Layer actions">
+            <button title="Move layer forward" aria-label="Move layer forward" disabled={selectedIds.length !== 1 || items.findIndex((item) => item.id === selectedIds[0]) === items.length - 1} onClick={() => moveLayer(1)}><ChevronUp size={16} /></button>
+            <button title="Move layer backward" aria-label="Move layer backward" disabled={selectedIds.length !== 1 || items.findIndex((item) => item.id === selectedIds[0]) <= 0} onClick={() => moveLayer(-1)}><ChevronDown size={16} /></button>
+            <button title="Duplicate selection (Ctrl+D)" aria-label="Duplicate selection" disabled={!selectedIds.length} onClick={duplicateSelected}><Copy size={15} /></button>
+            <button title="Delete selection" aria-label="Delete selection" disabled={!selectedIds.length} onClick={deleteSelected}><Trash2 size={15} /></button>
+          </div>
+          <div className="layers-list">{items.length === 0 ? <p className="layers-empty">Draw a line or shape and it will appear here.</p> : [...items].reverse().map((item) => {
+            const detail = item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" ? formatFeetInches(itemLength(item)) : item.kind === "note" ? (item.label || "Note") : "";
+            return <button key={item.id} className={`layer-row ${selectedIds.includes(item.id) ? "selected" : ""}`} aria-pressed={selectedIds.includes(item.id)} onClick={(event) => { setSelectedIds((current) => updateSelection(current, item.id, event.ctrlKey || event.metaKey)); setActiveTool("select"); }}><span className="layer-swatch" style={{ backgroundColor: item.color }} /><span className="layer-copy"><strong>{item.layerName}</strong><small>{detail || "Drawing element"}</small></span></button>;
+          })}</div>
+          <p className="layers-footer">Select a layer to edit. Ctrl-click to select more.</p>
+        </aside>}
+
         <main className="drawing-area">
           <div className="canvas-toolbar">
             <div className="breadcrumb">
-              <span>Design tools</span><span className="crumb-separator">/</span><strong>Plan editor</strong>
+              <span>Workspace</span><span className="crumb-separator">/</span><strong>Plan editor</strong>
             </div>
             <div className="canvas-actions">
               <label className="toggle-control">
@@ -587,6 +698,7 @@ function App() {
 
           <PlanCanvas
             items={items}
+            theme={theme}
             selectedIds={selectedIds}
             activeTool={activeTool}
             gridFeet={gridFeet}
@@ -598,6 +710,7 @@ function App() {
             camera={camera}
             onCameraChange={setCamera}
             onCreate={createItem}
+            onCreatePolygon={createPolygon}
             onChooseTool={setActiveTool}
             onSelect={(id, additive = false) => setSelectedIds((current) => updateSelection(current, id, additive))}
             onBoxSelect={(ids, additive) => setSelectedIds((current) => additive ? [...new Set([...current, ...ids])] : ids)}
@@ -634,10 +747,10 @@ function App() {
           <section className="connect-dialog" role="dialog" aria-modal="true" aria-labelledby="connect-title">
             <button className="dialog-close" aria-label="Close" onClick={() => setConnectOpen(false)}><X size={18} /></button>
             <span className="dialog-kicker">ONE CLICK CONTRACTORS</span>
-            <h2 id="connect-title">Add SiteSketch as a design tool</h2>
+            <h2 id="connect-title">Add TRACE as a design tool</h2>
             <p>Deploy this app to a public HTTPS address, then add that address under <b>Configuration → Tools → Design Tools</b>.</p>
             <ol>
-              <li>Choose <b>Add</b> and name the tool “SiteSketch”.</li>
+              <li>Choose <b>Add</b> and name the tool “TRACE”.</li>
               <li>Paste the deployed app URL and save it.</li>
               <li>Open it from a customer’s Design Tools page.</li>
             </ol>

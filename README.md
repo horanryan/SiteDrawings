@@ -1,6 +1,6 @@
-# SiteSketch
+# TRACE — Site Drawings
 
-SiteSketch is a browser-based construction plan editor built with React, TypeScript, Vite, and Konva. The source is split by responsibility: the drawing model and snap geometry live in `src/model.ts`, the canvas and inspector are separate components, and import/export helpers are in `src/io`.
+TRACE is a browser-based site and construction plan editor by Ryan Horan. It uses React, TypeScript, Vite, and Konva. The drawing model and snapping logic live in `src/model.ts`; the canvas and properties inspector live in `src/components`; and the import and export helpers live in `src/io`.
 
 ## Run locally
 
@@ -9,36 +9,32 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. Create a production build with `npm run build`.
+Open the local URL printed by Vite. Run `npm test` for the tests and `npm run build` for a production build.
 
-## GitHub Pages
+## Deployment
 
-In the repository's **Settings → Pages**, set the build source to **GitHub Actions**. Pushing to `main` then runs the tests, builds the app, and publishes it. You can also run the deployment workflow manually from the Actions tab. For this repository the expected address is `https://horanryan.github.io/SiteDrawings/`.
+The GitHub Actions workflow tests and builds the app, then deploys it to GitHub Pages when `main` is pushed. It can also be run manually from the Actions tab. The repository's Pages source must be set to **GitHub Actions**. The expected address is [horanryan.github.io/SiteDrawings](https://horanryan.github.io/SiteDrawings/).
 
-Plans are stored in each browser on each device, not on GitHub or shared between devices. Export drawing data as JSON to transfer or back up a plan. A browser's existing local drawings on a different host or port will not automatically appear on GitHub Pages.
+## Drawing and editing
+
+- Use Line, Dashed, Dimension, Arrow, Note, or Freehand from the tool rail. Arrow is an annotation: drag from its tail toward the point you want to indicate; it does not display a measurement.
+- Open Shapes for rectangle, circle, triangle, diamond, pentagon, hexagon, octagon, or star. Draw by dragging on the canvas. A circle is drawn from its center to its radius; other shapes use the dragged bounds.
+- New rectangles and polygons become independently editable line segments. One Undo removes all segments created by a single shape. Existing saved rectangle objects remain editable as rectangles.
+- The Layers panel lists drawing elements. Select a layer to edit it, Ctrl-click (Command-click on a Mac) to select more, and use the panel controls to reorder, duplicate, or delete selected items. Change a selected element's layer name in Properties. Layers currently do not support hiding or locking.
+- Use Ctrl+D (Command+D on a Mac) to duplicate selected elements, Ctrl+A (Command+A) to select all, Delete to remove the selection, and Ctrl+Z / Ctrl+Y (or the corresponding Mac shortcuts) to undo / redo. The properties panel also lists the drawing-tool shortcuts.
+- Grid and object snapping help connect linework. Object snap takes priority near existing geometry. In Select mode, dragging a line endpoint also moves connected line endpoints; arrow endpoints move independently. Drag a selection box on empty canvas to select intersecting objects, or Ctrl-drag to add to the selection.
+- The editor prevents new collinear linework from overlapping an existing line. To remove a duplicate already in an older plan, select the line away from its endpoint and delete the top item; the other remains.
+- Connected endpoints and crossings divide line measurements into sections. Use Overall dimensions to show full lengths as well. Measurements can be entered as decimal feet or feet and inches. The grid spacing sets the snap interval.
+- Switch between light and dark appearance using the header button. The preference is stored in the browser. Dark mode adjusts the canvas display for contrast; exports use the saved drawing colors.
+- On iPad, drag with a finger or Apple Pencil to draw. In Select mode, drag an item to move it or the background to pan. Use two fingers to pan and pinch-zoom. Test Apple Pencil and palm rejection on the target device and iPadOS version before relying on them in production.
+
+## Saving and sharing
+
+Plans are saved in the current browser on the current device. They are not automatically shared between devices or stored on GitHub. Use **Export → Drawing data** to back up or transfer a plan, and **Import drawing** to restore a JSON file. The app also exports SVG, PNG, and landscape-letter PDF. JSON imports are limited to 10 MB, 1,000 items, and bounded freehand point counts. Browser storage is tied to the site origin, so a plan saved on a different host or port will not automatically appear on GitHub Pages.
+
+TRACE retains the previous SiteSketch browser-storage key so existing browser-local plans on the same origin remain available. Older plans without layer names receive readable names when opened. Newly saved plans can include arrow annotations and layer names; use the current app when opening those files.
 
 When embedding the app, use an opaque `job_id` query parameter only. Do not put customer names, email addresses, credentials, or other personal information in URLs; query strings may be recorded in browser history and server logs. The app removes known customer-detail parameters from the address bar and sends a `no-referrer` policy, but this cannot undo exposure to the server that handled the initial request. Drawings remain browser-local and are not protected by a backend authorization layer.
-
-## Drawing tools
-
-- Lines, dashed lines, rectangles, circles, dimension lines, and notes
-- New rectangles become four separately selectable lines; undo removes the entire newly drawn rectangle in one step. Existing saved rectangles remain editable as rectangles.
-- Freehand strokes with a finger, Apple Pencil, or mouse; select a stroke to move, recolor, or delete it
-- Grid snapping and snapping to nearby linework, corners, and circle edges
-- Object snap takes priority near linework, even with grid snap enabled. Connected endpoints and crossings divide displayed line measurements into sections; use Overall dimensions to show the full lengths too.
-- Nearby line measurement labels are repositioned to reduce overlap on the canvas and in PDF, PNG, and SVG exports. Automatic overall dimensions are off by default and follow the toolbar toggle in those exports; manually drawn dimensions remain visible.
-- Editable line lengths in decimal feet or feet-and-inches notation; changing a measurement updates the geometry
-- Line and dashed-line tools stay active after each segment; start the next line where you press, with object snap available to connect to existing linework
-- Select and move, undo/redo, zoom/pan, autosave, PDF/SVG/PNG export, and JSON import/export
-- Ctrl-click (or Command-click on a Mac) to add or remove items from the selection; Delete removes all selected items
-- In Select mode, drag a box from an empty area to select items it touches; Ctrl-drag adds to the current selection
-- In Select mode, select one line and drag either endpoint handle to reposition it; connected line endpoints follow the joint, and grid and object snapping apply
-- PDF exports use landscape letter pages and fit the whole drawing without changing its proportions
-- JSON imports are limited to 10 MB, 1,000 items, and bounded freehand point counts to protect the browser from oversized files
-- Use the scale setting to choose how far apart the snap grid squares are
-- On iPad, drag with a finger or Apple Pencil to draw. In Select mode, drag an item to move it or drag the background to pan. Use two fingers to pan and pinch-zoom.
-
-The canvas uses pointer events and reserves the browser safe areas for iPad layouts. Test Apple Pencil behavior on the target iPad and iPadOS version before relying on it in production; desktop browser checks cannot certify device-specific stylus and palm-rejection behavior.
 
 ## Copyright and usage
 

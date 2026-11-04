@@ -1,15 +1,11 @@
-export type DrawingTool =
-  | "select"
-  | "wall"
-  | "dashed"
-  | "rectangle"
-  | "circle"
-  | "dimension"
-  | "freehand"
-  | "note";
+export type ItemKind = "wall" | "dashed" | "rectangle" | "circle" | "dimension" | "freehand" | "note" | "arrow";
+export type PolygonTool = "triangle" | "diamond" | "pentagon" | "hexagon" | "octagon" | "star";
+export type DrawingTool = "select" | ItemKind | PolygonTool;
+export type ShapeTool = Exclude<DrawingTool, "select" | "note">;
 
-export type ItemKind = Exclude<DrawingTool, "select">;
-export type ShapeTool = Exclude<ItemKind, "note">;
+export function isPolygonTool(tool: DrawingTool): tool is PolygonTool {
+  return ["triangle", "diamond", "pentagon", "hexagon", "octagon", "star"].includes(tool);
+}
 
 export interface Point {
   x: number;
@@ -26,6 +22,7 @@ export interface DrawingItem {
   y2: number;
   color: string;
   label?: string;
+  layerName?: string;
   widthLabel?: string;
   heightLabel?: string;
   showDimension: boolean;
@@ -56,6 +53,24 @@ export interface SnapResult {
   snapped: boolean;
 }
 
+const layerLabels: Record<ItemKind, string> = { wall: "Line", dashed: "Dashed line", rectangle: "Rectangle", circle: "Circle", dimension: "Dimension", note: "Note", freehand: "Freehand", arrow: "Arrow" };
+
+// Older plans have no layer names. Assign readable names without changing IDs.
+export function assignLayerNames(items: DrawingItem[]): DrawingItem[] {
+  const used = new Set(items.map((item) => item.layerName?.trim()).filter(Boolean));
+  const counts = new Map<ItemKind, number>();
+  return items.map((item) => {
+    if (item.layerName?.trim()) return item;
+    const label = layerLabels[item.kind];
+    let number = counts.get(item.kind) ?? 0;
+    let name: string;
+    do { name = `${label} ${++number}`; } while (used.has(name));
+    counts.set(item.kind, number);
+    used.add(name);
+    return { ...item, layerName: name };
+  });
+}
+
 export function updateSelection(current: string[], id: string | null, additive = false): string[] {
   if (!id) return [];
   if (!additive) return [id];
@@ -76,7 +91,7 @@ export function itemIntersectsSelection(item: DrawingItem, a: Point, b: Point): 
     }
     return true;
   };
-  if (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension") return intersects({ x: item.x, y: item.y }, { x: item.x2, y: item.y2 });
+  if (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" || item.kind === "arrow") return intersects({ x: item.x, y: item.y }, { x: item.x2, y: item.y2 });
   if (item.kind === "freehand") {
     const points = item.points ?? [];
     return points.slice(1).some((point, index) => intersects({ x: item.x + points[index].x, y: item.y + points[index].y }, { x: item.x + point.x, y: item.y + point.y }));
@@ -122,7 +137,7 @@ export function newItem(
     x2: end.x,
     y2: end.y,
     color: kind === "dashed" ? "#718196" : "#30465c",
-    showDimension: true,
+    showDimension: kind !== "arrow",
   };
 }
 
@@ -132,6 +147,65 @@ export function rectangleAsLines(rectangle: DrawingItem): DrawingItem[] {
   if (right - left <= 0.001 || bottom - top <= 0.001) return [];
   const corners = [{ x: left, y: top }, { x: right, y: top }, { x: right, y: bottom }, { x: left, y: bottom }];
   return corners.map((start, index) => ({ ...newItem("wall", start, corners[(index + 1) % corners.length]), color: rectangle.color, showDimension: rectangle.showDimension }));
+}
+
+// Only physical linework participates; dimension annotations can intentionally
+// refer to the same endpoints as the line they measure.
+function lineSegments(item: DrawingItem): Array<[Point, Point]> {
+  if (item.kind === "wall" || item.kind === "dashed") {
+    return [[{ x: item.x, y: item.y }, { x: item.x2, y: item.y2 }]];
+  }
+  if (item.kind !== "rectangle") return [];
+  const corners = [{ x: item.x, y: item.y }, { x: item.x2, y: item.y }, { x: item.x2, y: item.y2 }, { x: item.x, y: item.y2 }];
+  return corners.map((corner, index) => [corner, corners[(index + 1) % corners.length]]);
+}
+
+function segmentsOverlap([a, b]: [Point, Point], [c, d]: [Point, Point]): boolean {
+  const epsilon = 1e-6;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const length = Math.hypot(dx, dy);
+  if (length <= epsilon) return false;
+  // Perpendicular distance from each endpoint to the first line, in feet.
+  if (Math.abs(dx * (c.y - a.y) - dy * (c.x - a.x)) / length > epsilon ||
+      Math.abs(dx * (d.y - a.y) - dy * (d.x - a.x)) / length > epsilon) return false;
+  const projection = (p: Point) => ((p.x - a.x) * dx + (p.y - a.y) * dy) / length;
+  const cAlong = projection(c), dAlong = projection(d);
+  return Math.min(length, Math.max(cAlong, dAlong)) - Math.max(0, Math.min(cAlong, dAlong)) > epsilon;
+}
+
+function itemsOverlap(first: DrawingItem, second: DrawingItem): boolean {
+  return lineSegments(first).some((a) => lineSegments(second).some((b) => segmentsOverlap(a, b)));
+}
+
+// Existing overlaps in imported or older plans remain editable and removable.
+export function hasNewLineOverlap(previous: DrawingItem[], next: DrawingItem[]): boolean {
+  const previousById = new Map(previous.map((item) => [item.id, item]));
+  return next.some((item, index) => next.slice(index + 1).some((other) => {
+    const before = previousById.get(item.id), otherBefore = previousById.get(other.id);
+    if (before && otherBefore && before.kind === item.kind && otherBefore.kind === other.kind &&
+        before.x === item.x && before.y === item.y && before.x2 === item.x2 && before.y2 === item.y2 &&
+        otherBefore.x === other.x && otherBefore.y === other.y && otherBefore.x2 === other.x2 && otherBefore.y2 === other.y2) return false;
+    return itemsOverlap(item, other) && !(before && otherBefore && itemsOverlap(before, otherBefore));
+  }));
+}
+
+// Polygon tools become ordinary line segments, just like newly drawn rectangles.
+export function polygonVertices(kind: PolygonTool, start: Point, end: Point): Point[] {
+  const left = Math.min(start.x, end.x), right = Math.max(start.x, end.x);
+  const top = Math.min(start.y, end.y), bottom = Math.max(start.y, end.y);
+  const width = right - left, height = bottom - top;
+  if (width <= 0.001 || height <= 0.001) return [];
+  const sides = ({ triangle: 3, diamond: 4, pentagon: 5, hexagon: 6, octagon: 8, star: 10 } as const)[kind];
+  return Array.from({ length: sides }, (_, index) => {
+    const angle = -Math.PI / 2 + index * Math.PI * 2 / sides;
+    const radius = kind === "star" && index % 2 ? .43 : 1;
+    return { x: left + width / 2 + Math.cos(angle) * width / 2 * radius, y: top + height / 2 + Math.sin(angle) * height / 2 * radius };
+  });
+}
+
+export function polygonAsLines(kind: PolygonTool, start: Point, end: Point): DrawingItem[] {
+  const vertices = polygonVertices(kind, start, end);
+  return vertices.map((point, index) => newItem("wall", point, vertices[(index + 1) % vertices.length]));
 }
 
 export function distance(start: Point, end: Point): number {
@@ -460,7 +534,7 @@ export function prepareJoint(items: DrawingItem[], joint: Point): DrawingItem[] 
     const newId = newItem(item.kind, joint, end).id;
     return [
       { ...item, x2: joint.x, y2: joint.y },
-      { ...item, id: newId, x: joint.x, y: joint.y, label: undefined },
+      { ...item, id: newId, x: joint.x, y: joint.y, label: undefined, layerName: undefined },
     ];
   });
 }
@@ -510,13 +584,14 @@ export function isDrawingFile(value: unknown): value is DrawingFile {
       item.id.length === 0 ||
       item.id.length > 128 ||
       itemIds.has(item.id) ||
-      !["wall", "dashed", "rectangle", "circle", "dimension", "note", "freehand"].includes(item.kind) ||
+      !["wall", "dashed", "rectangle", "circle", "dimension", "note", "freehand", "arrow"].includes(item.kind) ||
       ![item.x, item.y, item.x2, item.y2].every(
         (coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate) && Math.abs(coordinate) <= 1_000_000,
       ) ||
       typeof item.color !== "string" ||
       !/^#[\da-f]{6}$/i.test(item.color) ||
       typeof item.showDimension !== "boolean" ||
+      (item.layerName !== undefined && (typeof item.layerName !== "string" || item.layerName.length > 80)) ||
       (item.label !== undefined && (typeof item.label !== "string" || item.label.length > 1_000)) ||
       (item.widthLabel !== undefined && (typeof item.widthLabel !== "string" || item.widthLabel.length > 1_000)) ||
       (item.heightLabel !== undefined && (typeof item.heightLabel !== "string" || item.heightLabel.length > 1_000))

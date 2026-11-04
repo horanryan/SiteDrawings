@@ -7,18 +7,21 @@ import {
   formatFeetInches,
   itemLength,
   itemIntersectsSelection,
+  isPolygonTool,
+  polygonVertices,
   lineSections,
   lineSectionsByItem,
   layoutLineLabels,
   hasFullDimension,
   moveItem,
+  moveLineEndpoint,
   moveJoint,
   prepareJoint,
   newItem,
   snapPoint,
   MAX_FREEHAND_POINTS,
 } from "../model";
-import type { DrawingItem, DrawingTool, Point, ShapeTool } from "../model";
+import type { DrawingItem, DrawingTool, Point, ShapeTool, PolygonTool } from "../model";
 
 const PIXELS_PER_FOOT = 40;
 const DEFAULT_CAMERA = { x: 120, y: 80, zoom: 1 };
@@ -30,6 +33,7 @@ export interface Camera {
 }
 
 interface PlanCanvasProps {
+  theme: "light" | "dark";
   items: DrawingItem[];
   selectedIds: string[];
   activeTool: DrawingTool;
@@ -42,6 +46,7 @@ interface PlanCanvasProps {
   camera: Camera;
   onCameraChange: (camera: Camera) => void;
   onCreate: (item: DrawingItem) => void;
+  onCreatePolygon: (kind: PolygonTool, start: Point, end: Point) => void;
   onChooseTool: (tool: DrawingTool) => void;
   onSelect: (id: string | null, additive?: boolean) => void;
   onBoxSelect: (ids: string[], additive: boolean) => void;
@@ -177,6 +182,11 @@ function LineDrawing({ item, items = [], sections, showOverallDimensions = false
   );
 }
 
+function AnnotationArrow({ item }: { item: DrawingItem }) {
+  const dx = item.x2 - item.x, dy = item.y2 - item.y;
+  return <><Arrow points={[0, 0, dx, dy]} stroke={item.color} fill={item.color} strokeWidth={0.06} pointerLength={0.3} pointerWidth={0.22} listening={false} /><Line points={[0, 0, dx, dy]} stroke="transparent" strokeWidth={0.38} hitStrokeWidth={0.38} /></>;
+}
+
 function FreehandDrawing({ item }: { item: DrawingItem }) {
   const points = (item.points ?? []).flatMap((point) => [point.x, point.y]);
   return <Line points={points} stroke={item.color} strokeWidth={0.06} lineCap="round" lineJoin="round" hitStrokeWidth={0.38} />;
@@ -294,8 +304,19 @@ function DimensionDrawing({ item }: { item: DrawingItem }) {
   );
 }
 
+// Adjust only the on-screen contrast; the stored and exported color is unchanged.
+function displayColor(color: string, theme: "light" | "dark"): string {
+  if (theme === "light") return color;
+  const components = [1, 3, 5].map((start) => parseInt(color.slice(start, start + 2), 16));
+  const luminance = components[0] * 0.2126 + components[1] * 0.7152 + components[2] * 0.0722;
+  if (luminance >= 165) return color;
+  const amount = (165 - luminance) / (255 - luminance);
+  return `#${components.map((component) => Math.round(component + (255 - component) * amount).toString(16).padStart(2, "0")).join("")}`;
+}
+
 const DrawingShape = memo(function DrawingShape({
   item,
+  theme,
   selected,
   draggable,
   gridFeet,
@@ -311,6 +332,7 @@ const DrawingShape = memo(function DrawingShape({
   onUpdate,
 }: {
   item: DrawingItem;
+  theme: "light" | "dark";
   selected: boolean;
   draggable: boolean;
   gridFeet: number;
@@ -325,6 +347,8 @@ const DrawingShape = memo(function DrawingShape({
   selectItem: (id: string, additive?: boolean) => void;
   onUpdate: (item: DrawingItem) => void;
 }) {
+  const visualItem = { ...item, color: displayColor(item.color, theme) };
+
   function snapDrag(event: KonvaEventObject<DragEvent>) {
     const position = event.target.position();
     const result = snapPoint(
@@ -342,7 +366,11 @@ const DrawingShape = memo(function DrawingShape({
   }
 
   function finishDrag(event: KonvaEventObject<DragEvent>) {
-    onUpdate(moveItem(item, event.target.x() - item.x, event.target.y() - item.y));
+    const moved = moveItem(item, event.target.x() - item.x, event.target.y() - item.y);
+    // Reset the imperatively dragged node; React will render the committed position.
+    // This also restores its old position when a move is rejected.
+    event.target.position({ x: item.x, y: item.y });
+    onUpdate(moved);
   }
 
   return (
@@ -364,29 +392,31 @@ const DrawingShape = memo(function DrawingShape({
       onDragEnd={finishDrag}
     >
       {item.kind === "freehand" ? (
-        <FreehandDrawing item={item} />
+        <FreehandDrawing item={visualItem} />
       ) : item.kind === "wall" || item.kind === "dashed" ? (
-        <LineDrawing item={{ ...item, showDimension: showDimensions && item.showDimension }} items={items} sections={sectionsByItem.get(item.id)} showOverallDimensions={showOverallDimensions} labelPositions={labelPositions} />
+        <LineDrawing item={{ ...visualItem, showDimension: showDimensions && item.showDimension }} items={items} sections={sectionsByItem.get(item.id)} showOverallDimensions={showOverallDimensions} labelPositions={labelPositions} />
       ) : item.kind === "rectangle" ? (
-        <RectangleDrawing item={{ ...item, showDimension: showDimensions && item.showDimension }} />
+        <RectangleDrawing item={{ ...visualItem, showDimension: showDimensions && item.showDimension }} />
       ) : item.kind === "circle" ? (
-        <CircleDrawing item={{ ...item, showDimension: showDimensions && item.showDimension }} />
+        <CircleDrawing item={{ ...visualItem, showDimension: showDimensions && item.showDimension }} />
       ) : item.kind === "dimension" ? (
-        <DimensionDrawing item={{ ...item, showDimension: showDimensions && item.showDimension }} />
+        <DimensionDrawing item={{ ...visualItem, showDimension: showDimensions && item.showDimension }} />
+      ) : item.kind === "arrow" ? (
+        <AnnotationArrow item={visualItem} />
       ) : (
         <Text
           text={item.label || "Note"}
           fontFamily="DM Sans, sans-serif"
           fontSize={0.36}
           fontStyle="600"
-          fill={item.color}
+          fill={visualItem.color}
           padding={0.08}
         />
       )}
-      {selected && (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" || item.kind === "freehand") && (
+      {selected && (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" || item.kind === "arrow" || item.kind === "freehand") && (
         <Line points={item.kind === "freehand" ? (item.points ?? []).flatMap((point) => [point.x, point.y]) : [0, 0, item.x2 - item.x, item.y2 - item.y]} stroke="#3b91ce" strokeWidth={0.14} opacity={0.55} lineCap="round" lineJoin="round" listening={false} />
       )}
-      {selected && item.kind !== "wall" && item.kind !== "dashed" && item.kind !== "dimension" && item.kind !== "freehand" && (
+      {selected && item.kind !== "wall" && item.kind !== "dashed" && item.kind !== "dimension" && item.kind !== "arrow" && item.kind !== "freehand" && (
         item.kind === "circle" ? (
           <Circle
             radius={distance({ x: item.x, y: item.y }, { x: item.x2, y: item.y2 }) + 0.08}
@@ -426,11 +456,13 @@ const Grid = memo(function Grid({
   height,
   camera,
   gridFeet,
+  theme,
 }: {
   width: number;
   height: number;
   camera: Camera;
   gridFeet: number;
+  theme: "light" | "dark";
 }) {
   const lines = useMemo(() => {
     if (width <= 0 || height <= 0 || gridFeet <= 0) return [];
@@ -471,13 +503,13 @@ const Grid = memo(function Grid({
         y={-camera.y / (PIXELS_PER_FOOT * camera.zoom)}
         width={width / (PIXELS_PER_FOOT * camera.zoom)}
         height={height / (PIXELS_PER_FOOT * camera.zoom)}
-        fill="#fff"
+        fill={theme === "dark" ? "#111f26" : "#fff"}
       />
       {lines.map((line, index) => (
         <Line
           key={index}
           points={line.points}
-          stroke={line.major ? "#d9e2eb" : "#edf1f5"}
+          stroke={theme === "dark" ? (line.major ? "#304750" : "#1d3038") : (line.major ? "#d9e2eb" : "#edf1f5")}
           strokeWidth={line.major ? 0.028 : 0.018}
           listening={false}
         />
@@ -488,6 +520,7 @@ const Grid = memo(function Grid({
 
 export default function PlanCanvas({
   items,
+  theme,
   selectedIds,
   activeTool,
   gridFeet,
@@ -499,6 +532,7 @@ export default function PlanCanvas({
   camera,
   onCameraChange,
   onCreate,
+  onCreatePolygon,
   onChooseTool,
   onSelect,
   onBoxSelect,
@@ -521,7 +555,7 @@ export default function PlanCanvas({
   const touchPointsRef = useRef(new Map<number, Point>());
   const penPointersRef = useRef(new Set<number>());
   const pixelsPerFoot = PIXELS_PER_FOOT * camera.zoom;
-  const selectedLine = selectedIds.length === 1 ? items.find((item) => item.id === selectedIds[0] && (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension")) : undefined;
+  const selectedLine = selectedIds.length === 1 ? items.find((item) => item.id === selectedIds[0] && (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" || item.kind === "arrow")) : undefined;
   const displayedItems = endpointPreview ?? items;
   const sectionsByItem = useMemo(() => lineSectionsByItem(displayedItems), [displayedItems]);
   const lineLabelPositions = useMemo(() => layoutLineLabels(displayedItems, showOverallDimensions, sectionsByItem), [displayedItems, sectionsByItem, showOverallDimensions]);
@@ -555,6 +589,13 @@ export default function PlanCanvas({
 
   function endpointAt(event: KonvaEventObject<DragEvent>, joint: { point: Point; prepared: DrawingItem[] }) {
     const position = event.target.position();
+    // An annotation arrow can point to a joint without moving the connected linework.
+    if (selectedLine?.kind === "arrow") {
+      const endpoint = distance(joint.point, { x: selectedLine.x, y: selectedLine.y }) <= 1e-6 ? "start" : "end";
+      const point = snapPoint(position, items.filter((item) => item.id !== selectedLine.id), { grid: gridSnap, objects: objectSnap, gridFeet, toleranceFeet: 10 / pixelsPerFoot }).point;
+      event.target.position(point);
+      return items.map((item) => item.id === selectedLine.id ? moveLineEndpoint(item, endpoint, point) : item);
+    }
     const stationary = joint.prepared.filter((item) => !((item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension") && (distance({ x: item.x, y: item.y }, joint.point) <= 1e-6 || distance({ x: item.x2, y: item.y2 }, joint.point) <= 1e-6)));
     const point = snapPoint(position, stationary, { grid: gridSnap, objects: objectSnap, gridFeet, toleranceFeet: 10 / pixelsPerFoot }).point;
     event.target.position(point);
@@ -800,9 +841,13 @@ export default function PlanCanvas({
       : releasePoint ? snap(releasePoint).point : currentGesture.current;
     if (currentGesture.points) appendFreehandPoint(currentGesture, end);
     if (!cancelled && (currentGesture.kind === "freehand" ? (currentGesture.points?.length ?? 0) >= 2 : distance(currentGesture.start, end) > 0.04)) {
-      const item = newItem(currentGesture.kind, currentGesture.start, end);
-      if (currentGesture.points) item.points = currentGesture.points;
-      onCreate(item);
+      if (isPolygonTool(currentGesture.kind)) {
+        onCreatePolygon(currentGesture.kind, currentGesture.start, end);
+      } else {
+        const item = newItem(currentGesture.kind, currentGesture.start, end);
+        if (currentGesture.points) item.points = currentGesture.points;
+        onCreate(item);
+      }
     }
     gestureRef.current = null;
     cancelGesturePreview();
@@ -829,9 +874,12 @@ export default function PlanCanvas({
     });
   }
 
-  const preview = gesture
-    ? { ...newItem(gesture.kind, gesture.start, gesture.current), points: gesture.points }
-    : null;
+  const preview = gesture && !isPolygonTool(gesture.kind) ? newItem(gesture.kind, gesture.start, gesture.current) : null;
+  const polygonPreview = gesture && isPolygonTool(gesture.kind) ? polygonVertices(gesture.kind, gesture.start, gesture.current) : [];
+  if (preview && gesture) {
+    preview.color = displayColor(preview.color, theme);
+    preview.points = gesture.points;
+  }
 
   return (
     <div
@@ -853,12 +901,13 @@ export default function PlanCanvas({
         onPointerCancel={(event) => handlePointerUp(event.evt, true)}
         onWheel={handleWheel}
       >
-        <Grid width={size.width} height={size.height} camera={camera} gridFeet={gridFeet} />
+        <Grid width={size.width} height={size.height} camera={camera} gridFeet={gridFeet} theme={theme} />
         <Layer>
           {displayedItems.map((item) => (
             <DrawingShape
               key={item.id}
               item={item}
+              theme={theme}
               selected={selectedIds.includes(item.id)}
               draggable={activeTool === "select"}
               gridFeet={gridFeet}
@@ -874,6 +923,7 @@ export default function PlanCanvas({
               onUpdate={onUpdate}
             />
           ))}
+          {polygonPreview.length > 0 && <Line points={polygonPreview.flatMap((point) => [point.x, point.y])} closed stroke={theme === "dark" ? "#b6d9dc" : "#30465c"} strokeWidth={0.06} opacity={0.6} listening={false} />}
           {preview && (
             <Group x={preview.x} y={preview.y} opacity={0.6} listening={false}>
               {preview.kind === "freehand" ? (
@@ -884,6 +934,8 @@ export default function PlanCanvas({
                 <RectangleDrawing item={preview} />
               ) : preview.kind === "circle" ? (
                 <CircleDrawing item={preview} />
+              ) : preview.kind === "arrow" ? (
+                <AnnotationArrow item={preview} />
               ) : (
                 <DimensionDrawing item={preview} />
               )}
@@ -899,14 +951,14 @@ export default function PlanCanvas({
               onDragStart={(event) => {
                 event.cancelBubble = true;
                 const point = endpoint === "start" ? { x: selectedLine.x, y: selectedLine.y } : { x: selectedLine.x2, y: selectedLine.y2 };
-                jointRef.current = { point, prepared: prepareJoint(items, point) };
+                jointRef.current = { point, prepared: selectedLine.kind === "arrow" ? items : prepareJoint(items, point) };
               }}
               onDragMove={(event) => { event.cancelBubble = true; if (jointRef.current) setEndpointPreview(endpointAt(event, jointRef.current)); }}
               onDragEnd={(event) => {
                 event.cancelBubble = true;
                 if (!event.evt.type.includes("cancel") && jointRef.current) {
                   const updated = endpointAt(event, jointRef.current);
-                  if (updated.every((item) => !["wall", "dashed", "dimension"].includes(item.kind) || distance({ x: item.x, y: item.y }, { x: item.x2, y: item.y2 }) > 0.001)) onUpdateItems(updated);
+                  if (updated.every((item) => !["wall", "dashed", "dimension", "arrow"].includes(item.kind) || distance({ x: item.x, y: item.y }, { x: item.x2, y: item.y2 }) > 0.001)) onUpdateItems(updated);
                 }
                 jointRef.current = null;
                 setEndpointPreview(null);
@@ -916,9 +968,10 @@ export default function PlanCanvas({
       </Stage>
       {items.length === 0 && !gesture && activeTool === "select" && (
         <div className="canvas-empty">
-          <div className="empty-grid-icon">⌗</div>
-          <strong>Start your plan</strong>
-          <span>Pick a tool and draw on the grid.<br />Each square represents {formatFeetInches(gridFeet)}.</span>
+          <div className="empty-grid-icon" aria-hidden="true"><span>⌗</span></div>
+          <span className="empty-eyebrow">YOUR DRAWING WORKSPACE</span>
+          <strong>Start with a line.</strong>
+          <span>Bring your plan to life, one detail at a time.<br />Each grid square represents {formatFeetInches(gridFeet)}.</span>
           <button className="button button-outline" onClick={() => onChooseTool("wall")}>
             Draw a line
           </button>

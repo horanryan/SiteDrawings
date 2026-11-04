@@ -8,6 +8,7 @@ import {
   lineSectionsByItem,
   layoutLineLabels,
   hasFullDimension,
+  hasNewLineOverlap,
   moveItem,
   moveLineEndpoint,
   moveJoint,
@@ -16,13 +17,15 @@ import {
   parseFeetInches,
   resizeLine,
   rectangleAsLines,
+  polygonAsLines,
+  assignLayerNames,
   snapPoint,
   updateSelection,
   MAX_DRAWING_ITEMS,
   MAX_FREEHAND_POINTS,
   MAX_TOTAL_FREEHAND_POINTS,
 } from "./model";
-import type { DrawingFile } from "./model";
+import type { DrawingFile, PolygonTool } from "./model";
 import { drawingAsSvg } from "./io/drawingFiles";
 import { jpegAsPdf } from "./io/drawingPdf";
 
@@ -43,6 +46,23 @@ describe("plan measurements", () => {
     }
     expect(rectangleAsLines(newItem("rectangle", { x: 1, y: 2 }, { x: 1, y: 5 }))).toEqual([]);
   });
+  it("creates closed editable segments for each polygon in either drag direction", () => {
+    const shapes: Array<[PolygonTool, number]> = [["triangle", 3], ["diamond", 4], ["pentagon", 5], ["hexagon", 6], ["octagon", 8], ["star", 10]];
+    for (const [kind, count] of shapes) {
+      for (const [start, end] of [[{ x: 1, y: 2 }, { x: 7, y: 8 }], [{ x: 7, y: 8 }, { x: 1, y: 2 }]]) {
+        const lines = polygonAsLines(kind, start, end);
+        expect(lines).toHaveLength(count);
+        expect(new Set(lines.map((line) => line.id)).size).toBe(count);
+        lines.forEach((line, index) => {
+          expect(line.kind).toBe("wall");
+          expect([line.x2, line.y2]).toEqual([lines[(index + 1) % count].x, lines[(index + 1) % count].y]);
+          expect(Math.hypot(line.x2 - line.x, line.y2 - line.y)).toBeGreaterThan(0);
+        });
+      }
+      expect(polygonAsLines(kind, { x: 1, y: 0 }, { x: 1, y: 5 })).toEqual([]);
+    }
+  });
+
   it("selects lines intersecting a dragged box in either direction", () => {
     const from = { x: 2, y: 2 }, to = { x: 4, y: 4 };
     const crossing = newItem("wall", { x: 0, y: 3 }, { x: 6, y: 3 });
@@ -54,6 +74,24 @@ describe("plan measurements", () => {
     const curve = { ...newItem("freehand", { x: 0, y: 0 }, { x: 6, y: 6 }), points: [{ x: 0, y: 0 }, { x: 6, y: 6 }] };
     expect(itemIntersectsSelection(curve, from, to)).toBe(true);
   });
+  it("assigns readable persistent layer names to older and new items", () => {
+    const first = newItem("wall", { x: 0, y: 0 }, { x: 2, y: 0 });
+    const second = newItem("wall", { x: 0, y: 1 }, { x: 2, y: 1 });
+    const arrow = newItem("arrow", { x: 0, y: 0 }, { x: 1, y: 1 });
+    const named = assignLayerNames([first, second, arrow]);
+    expect(named.map((item) => item.layerName)).toEqual(["Line 1", "Line 2", "Arrow 1"]);
+    expect(named[2].showDimension).toBe(false);
+    expect(assignLayerNames([named[1], named[0]]).map((item) => item.layerName)).toEqual(["Line 2", "Line 1"]);
+    expect(assignLayerNames([named[0], { ...second, layerName: undefined }])[1].layerName).toBe("Line 2");
+    const file = { version: 1 as const, name: "Plan", gridFeet: 1, items: named };
+    expect(isDrawingFile(file)).toBe(true);
+    const arrowSvg = drawingAsSvg({ ...file, items: [named[2]] });
+    expect(arrowSvg).toContain('<path d="M ');
+    expect(arrowSvg).not.toContain('<text ');
+    const movedJoint = moveJoint(named, { x: 0, y: 0 }, { x: 3, y: 3 });
+    expect(movedJoint[2]).toEqual(named[2]);
+  });
+
   it("adds and removes individual items from a selection", () => {
     expect(updateSelection(["a"], "b", true)).toEqual(["a", "b"]);
     expect(updateSelection(["a", "b"], "a", true)).toEqual(["b"]);
@@ -95,6 +133,23 @@ describe("plan measurements", () => {
     const endMoved = moveLineEndpoint(line, "end", { x: 8, y: 4 });
     expect([endMoved.x, endMoved.y, endMoved.x2, endMoved.y2]).toEqual([1, 2, 8, 4]);
     expect(endMoved.id).toBe(line.id);
+  });
+
+  it("detects newly overlapping linework while allowing connected joints and dimensions", () => {
+    const line = newItem("wall", { x: 0, y: 0 }, { x: 10, y: 0 });
+    const reversed = newItem("wall", { x: 10, y: 0 }, { x: 0, y: 0 });
+    const partial = newItem("dashed", { x: 5, y: 0 }, { x: 15, y: 0 });
+    const joined = newItem("wall", { x: 10, y: 0 }, { x: 15, y: 0 });
+    const crossing = newItem("wall", { x: 5, y: -2 }, { x: 5, y: 2 });
+    const dimension = newItem("dimension", { x: 0, y: 0 }, { x: 10, y: 0 });
+    const rectangle = newItem("rectangle", { x: 2, y: 0 }, { x: 4, y: 3 });
+    expect(hasNewLineOverlap([line], [line, reversed])).toBe(true);
+    expect(hasNewLineOverlap([line], [line, partial])).toBe(true);
+    expect(hasNewLineOverlap([line], [line, joined, crossing, dimension])).toBe(false);
+    expect(hasNewLineOverlap([line], [line, rectangle])).toBe(true);
+    expect(hasNewLineOverlap([line, reversed], [line, reversed, crossing])).toBe(false);
+    expect(hasNewLineOverlap([line, reversed], [line])).toBe(false);
+    expect(hasNewLineOverlap([line, joined], [line, { ...joined, x: 9 }])).toBe(true);
   });
 
   it("moves all coincident endpoints while leaving unrelated lines alone", () => {

@@ -36,6 +36,14 @@ function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDim
   const length = Math.hypot(dx, dy) || 1;
   const color = xml(item.color);
 
+  if (item.kind === "arrow") {
+    const head = Math.min(0.3 * scale, length * 0.7);
+    const wing = head * 0.4;
+    const ux = dx / length, uy = dy / length;
+    const bx = x2 - ux * head, by = y2 - uy * head;
+    return `<line x1="${x}" y1="${y}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="2.5" stroke-linecap="round"/><path d="M ${x2} ${y2} L ${bx - uy * wing} ${by + ux * wing} L ${bx + uy * wing} ${by - ux * wing} Z" fill="${color}"/>`;
+  }
+
   if (item.kind === "freehand") {
     const points = (item.points ?? []).map((point) => `${(item.x + point.x) * scale},${(item.y + point.y) * scale}`).join(" ");
     return `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;

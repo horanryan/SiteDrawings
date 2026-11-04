@@ -21,7 +21,7 @@ class AppErrorBoundary extends React.Component<
     if (this.state.hasError) {
       return (
         <main className="app-error" role="alert">
-          <h1>SiteSketch could not load this drawing.</h1>
+          <h1>TRACE could not load this drawing.</h1>
           <p>Your browser-local plan may still be available after reloading the app.</p>
           <button className="button button-primary" onClick={() => window.location.reload()}>
             Reload app
