@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2, ChevronDown } from "lucide-react";
+import { QUICK_GUIDE } from "../shortcuts";
 import {
   distance,
   formatFeetInches,
@@ -10,6 +11,8 @@ import {
 import type { DrawingItem } from "../model";
 
 interface InspectorProps {
+  guideOpen: boolean;
+  onToggleGuide: () => void;
   item: DrawingItem | undefined;
   selectedCount: number;
   gridFeet: number;
@@ -113,6 +116,8 @@ function TextProperty({
 }
 
 export default function Inspector({
+  guideOpen,
+  onToggleGuide,
   item,
   selectedCount,
   gridFeet,
@@ -326,28 +331,11 @@ export default function Inspector({
         </section>
 
         <section className="property-section quick-guide">
-          <h3>QUICK GUIDE</h3>
-          {[
-            ["V", "Select and move"],
-            ["L", "Line"],
-            ["D", "Dashed line"],
-            ["R", "Rectangle"],
-            ["C", "Circle"],
-            ["M", "Dimension"],
-            ["A", "Arrow annotation"],
-            ["N", "Add note"],
-            ["F", "Freehand"],
-            ["Ctrl+D", "Duplicate selection"],
-            ["Ctrl+A", "Select all"],
-          ].map(([key, description]) => (
-            <div className="guide-row" key={key}>
-              <kbd>{key}</kbd>
-              <span>{description}</span>
-            </div>
-          ))}
-          <p className="field-help guide-tip">
-            Start each line where you press. Use object snap to connect to existing linework.
-          </p>
+          <h3><button className="guide-toggle" aria-expanded={guideOpen} aria-controls="quick-guide-content" title="Toggle Quick Guide (G)" onClick={onToggleGuide}>QUICK GUIDE <ChevronDown size={15} className={guideOpen ? "expanded" : ""} /></button></h3>
+          {guideOpen && <div id="quick-guide-content">
+            {QUICK_GUIDE.map(([key, description]) => <div className="guide-row" key={`${key}-${description}`}><kbd>{key}</kbd><span>{description}</span></div>)}
+            <p className="field-help guide-tip">Drag a note to move it; click it to edit. Start each line where you press and use object snap to connect linework.</p>
+          </div>}
         </section>
       </div>
 

@@ -445,3 +445,9 @@ button:focus-visible, input:focus-visible { outline-color: #65cbd2; }
 .canvas-note-input:focus { outline: 3px solid rgb(77 213 227 / 30%); outline-offset: 1px; }
 [data-theme="dark"] .canvas-note-input { color: #edf8f8; background: #193039; border-color: #5ad6df; }
 .canvas-note-input { resize: none; overflow: hidden; padding: 3px; line-height: 1.2; font-family: monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.guide-toggle { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; letter-spacing: inherit; text-align: left; cursor: pointer; }
+.guide-toggle svg { transition: transform .15s; transform: rotate(-90deg); }
+.guide-toggle svg.expanded { transform: rotate(0); }
+.guide-toggle:hover { color: #168b97; }
+.guide-row kbd { flex: 0 0 auto; white-space: nowrap; }
+@media (pointer: coarse) { .guide-toggle { min-height: 44px; } }

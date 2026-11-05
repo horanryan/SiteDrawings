@@ -37,6 +37,7 @@ import {
   X,
 } from "lucide-react";
 import Inspector from "./components/Inspector";
+import { TOOL_SHORTCUTS, ACTION_SHORTCUTS, toolForKey } from "./shortcuts";
 import logo from "./assets/rh-trace.svg";
 import PlanCanvas, { DEFAULT_CAMERA } from "./components/PlanCanvas";
 import {
@@ -72,24 +73,24 @@ const tools: Array<{
   shortcut: string;
   icon: typeof MousePointer2;
 }> = [
-  { id: "select", label: "Select", shortcut: "V", icon: MousePointer2 },
-  { id: "wall", label: "Line", shortcut: "L", icon: MoveUpRight },
-  { id: "dashed", label: "Dashed", shortcut: "D", icon: MoveUpRight },
-  { id: "dimension", label: "Dimension", shortcut: "M", icon: Ruler },
-  { id: "arrow", label: "Arrow", shortcut: "A", icon: ArrowRight },
-  { id: "note", label: "Note", shortcut: "N", icon: Type },
-  { id: "freehand", label: "Freehand", shortcut: "F", icon: Pencil },
+  { id: "select", label: "Select", shortcut: TOOL_SHORTCUTS.select, icon: MousePointer2 },
+  { id: "wall", label: "Line", shortcut: TOOL_SHORTCUTS.wall, icon: MoveUpRight },
+  { id: "dashed", label: "Dashed", shortcut: TOOL_SHORTCUTS.dashed, icon: MoveUpRight },
+  { id: "dimension", label: "Dimension", shortcut: TOOL_SHORTCUTS.dimension, icon: Ruler },
+  { id: "arrow", label: "Arrow", shortcut: TOOL_SHORTCUTS.arrow, icon: ArrowRight },
+  { id: "note", label: "Note", shortcut: TOOL_SHORTCUTS.note, icon: Type },
+  { id: "freehand", label: "Freehand", shortcut: TOOL_SHORTCUTS.freehand, icon: Pencil },
  ];
 
 const shapeTools: Array<{ id: DrawingTool; label: string; shortcut: string; icon: typeof MousePointer2 }> = [
-  { id: "rectangle", label: "Rectangle", shortcut: "R", icon: Square },
-  { id: "circle", label: "Circle", shortcut: "C", icon: Circle },
-  { id: "triangle", label: "Triangle", shortcut: "", icon: Triangle },
-  { id: "diamond", label: "Diamond", shortcut: "", icon: Diamond },
-  { id: "pentagon", label: "Pentagon", shortcut: "", icon: Pentagon },
-  { id: "hexagon", label: "Hexagon", shortcut: "", icon: Hexagon },
-  { id: "octagon", label: "Octagon", shortcut: "", icon: Octagon },
-  { id: "star", label: "Star", shortcut: "", icon: Star },
+  { id: "rectangle", label: "Rectangle", shortcut: TOOL_SHORTCUTS.rectangle, icon: Square },
+  { id: "circle", label: "Circle", shortcut: TOOL_SHORTCUTS.circle, icon: Circle },
+  { id: "triangle", label: "Triangle", shortcut: TOOL_SHORTCUTS.triangle, icon: Triangle },
+  { id: "diamond", label: "Diamond", shortcut: TOOL_SHORTCUTS.diamond, icon: Diamond },
+  { id: "pentagon", label: "Pentagon", shortcut: TOOL_SHORTCUTS.pentagon, icon: Pentagon },
+  { id: "hexagon", label: "Hexagon", shortcut: TOOL_SHORTCUTS.hexagon, icon: Hexagon },
+  { id: "octagon", label: "Octagon", shortcut: TOOL_SHORTCUTS.octagon, icon: Octagon },
+  { id: "star", label: "Star", shortcut: TOOL_SHORTCUTS.star, icon: Star },
 ];
 
 function storageKey() {
@@ -224,7 +225,8 @@ function App() {
     try { return localStorage.getItem("trace.theme") === "dark" ? "dark" : "light"; }
     catch { return "light"; }
   });
-  const [layersOpen, setLayersOpen] = useState(true);
+  const [layersOpen, setLayersOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(true);
   const [shapeMenu, setShapeMenu] = useState<{ left: number; top: number } | null>(null);
   const [gridSnap, setGridSnap] = useState(true);
   const [objectSnap, setObjectSnap] = useState(true);
@@ -241,6 +243,7 @@ function App() {
   const undoStack = useRef<DrawingItem[][]>([]);
   const redoStack = useRef<DrawingItem[][]>([]);
   const importRef = useRef<HTMLInputElement>(null);
+  const shapeButtonRef = useRef<HTMLButtonElement>(null);
   const coordinatesRef = useRef<HTMLSpanElement>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
@@ -286,6 +289,7 @@ function App() {
         target.matches("input, textarea, select, [contenteditable=true]");
 
       if (event.code === "Space" && !editing) {
+        if (target instanceof HTMLElement && target.matches(":focus-visible") && target.closest("button, a, [role=button]")) return;
         event.preventDefault();
         setSpaceDown(true);
         return;
@@ -315,11 +319,19 @@ function App() {
         setExportOpen(false);
         setConnectOpen(false);
         setShapeMenu(null);
-      } else {
-        const tool = [...tools, ...shapeTools].find(
-          (entry) => entry.shortcut.toLowerCase() === event.key.toLowerCase(),
-        );
-        if (tool) { setActiveTool(tool.id); setShapeMenu(null); }
+      } else if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+        const key = event.key.toLowerCase();
+        if (key === ACTION_SHORTCUTS.layers.toLowerCase()) setLayersOpen((open) => !open);
+        else if (key === ACTION_SHORTCUTS.guide.toLowerCase()) setGuideOpen((open) => !open);
+        else if (key === ACTION_SHORTCUTS.fit.toLowerCase()) fitToPlan();
+        else if (key === ACTION_SHORTCUTS.shapes.toLowerCase()) toggleShapeMenu();
+        else if (key === ACTION_SHORTCUTS.export.toLowerCase()) setExportOpen((open) => !open);
+        else if (key === ACTION_SHORTCUTS.zoomIn || key === "=") zoomBy(1.2);
+        else if (key === ACTION_SHORTCUTS.zoomOut || key === "_") zoomBy(1 / 1.2);
+        else {
+          const tool = toolForKey(key);
+          if (tool) { setActiveTool(tool); setShapeMenu(null); }
+        }
       }
     }
 
@@ -338,7 +350,13 @@ function App() {
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", releaseSpace);
     };
-  }, [gridFeet, projectName, selectedIds]);
+  }, [gridFeet, projectName, selectedIds, items]);
+
+  function toggleShapeMenu() {
+    const rect = shapeButtonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setShapeMenu((current) => current ? null : { left: rect.right + 8, top: Math.max(8, Math.min(rect.top, window.innerHeight - 460)) });
+  }
 
   function showToast(message: string) {
     setToast(message);
@@ -594,7 +612,7 @@ function App() {
           </button>
           <span className="top-divider" />
           <div className="export-wrap">
-            <button className="button button-outline" onClick={() => setExportOpen(!exportOpen)}>
+            <button className="button button-outline" title="Toggle Export (E)" aria-expanded={exportOpen} onClick={() => setExportOpen(!exportOpen)}>
               <Download size={16} /> Export <span className="chevron">▾</span>
             </button>
             {exportOpen && (
@@ -627,7 +645,7 @@ function App() {
             {tools.map((tool) => <span className="tool-slot" key={tool.id}>
               <ToolButton {...tool} active={activeTool === tool.id} onClick={(id) => { setActiveTool(id); setShapeMenu(null); }} />
               {tool.id === "dashed" && <>
-                <button className={`tool-button shapes-toggle ${shapeTools.some((shape) => shape.id === activeTool) ? "active" : ""}`} aria-label="Shapes" aria-expanded={Boolean(shapeMenu)} aria-haspopup="true" title="Shapes" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setShapeMenu(shapeMenu ? null : { left: rect.right + 8, top: Math.max(8, Math.min(rect.top, window.innerHeight - 460)) }); }}><Shapes size={19} strokeWidth={1.7} /><span>Shapes</span></button>
+                <button className={`tool-button shapes-toggle ${shapeTools.some((shape) => shape.id === activeTool) ? "active" : ""}`} ref={shapeButtonRef} aria-label="Shapes" aria-expanded={Boolean(shapeMenu)} aria-haspopup="true" title="Shapes (B)" onClick={toggleShapeMenu}><Shapes size={19} strokeWidth={1.7} /><span>Shapes</span></button>
                 {shapeMenu && <div className="shapes-menu" style={{ left: shapeMenu.left, top: shapeMenu.top }} role="group" aria-label="Choose a shape">
                   <div className="shapes-heading">SHAPES <button aria-label="Close shapes" onClick={() => setShapeMenu(null)}><X size={15} /></button></div>
                   {shapeTools.map(({ id, label, shortcut, icon: Icon }) => <button key={id} className={`shape-option ${activeTool === id ? "selected" : ""}`} aria-pressed={activeTool === id} onClick={() => { setActiveTool(id); setShapeMenu(null); }}><Icon size={17} /><span>{label}</span>{shortcut && <kbd>{shortcut}</kbd>}</button>)}
@@ -635,7 +653,7 @@ function App() {
               </>}
             </span>)}
           </div>
-          <button className={`tool-button layers-toggle ${layersOpen ? "active" : ""}`} aria-pressed={layersOpen} title="Toggle layers" onClick={() => setLayersOpen(!layersOpen)}><Layers size={19} strokeWidth={1.7} /><span>Layers</span></button>
+          <button className={`tool-button layers-toggle ${layersOpen ? "active" : ""}`} aria-pressed={layersOpen} title="Toggle layers (Y)" onClick={() => setLayersOpen(!layersOpen)}><Layers size={19} strokeWidth={1.7} /><span>Layers</span></button>
           <div className="rail-bottom" hidden>
             <button
               className="tool-button help-tool"
@@ -690,10 +708,10 @@ function App() {
                 <span className="toggle-track" /><span>Overall dimensions</span>
               </label>
               <span className="action-divider" />
-              <button className="zoom-button" title="Zoom out" onClick={() => zoomBy(1 / 1.2)}><Minus size={14} /></button>
+              <button className="zoom-button" title="Zoom out (-)" onClick={() => zoomBy(1 / 1.2)}><Minus size={14} /></button>
               <span className="zoom-level">{Math.round(camera.zoom * 100)}%</span>
-              <button className="zoom-button" title="Zoom in" onClick={() => zoomBy(1.2)}><Plus size={14} /></button>
-              <button className="fit-button" title="Fit drawing to page" onClick={fitToPlan}><Grid2X2 size={15} /></button>
+              <button className="zoom-button" title="Zoom in (+)" onClick={() => zoomBy(1.2)}><Plus size={14} /></button>
+              <button className="fit-button" title="Fit drawing to page (0)" onClick={fitToPlan}><Grid2X2 size={15} /></button>
             </div>
           </div>
 
@@ -729,6 +747,8 @@ function App() {
         </main>
 
         <Inspector
+          guideOpen={guideOpen}
+          onToggleGuide={() => setGuideOpen((open) => !open)}
           item={selectedItem}
           selectedCount={selectedIds.length}
           gridFeet={gridFeet}

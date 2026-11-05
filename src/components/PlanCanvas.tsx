@@ -407,7 +407,7 @@ const DrawingShape = memo(function DrawingShape({
         if (draggable || additive) {
           if (draggable && item.kind === "note" && !additive) notePressRef.current = { x: event.evt.clientX, y: event.evt.clientY };
           event.cancelBubble = true;
-          event.evt.preventDefault();
+          // Do not prevent the pointer event: Konva needs it to start a drag.
           selectItem(item.id, additive);
         }
       }}
@@ -975,7 +975,7 @@ export default function PlanCanvas({
               item={item}
               theme={theme}
               selected={selectedIds.includes(item.id)}
-              draggable={activeTool === "select"}
+              draggable={activeTool === "select" && !spaceDown}
               gridFeet={gridFeet}
               gridSnap={gridSnap}
               objectSnap={objectSnap}
@@ -987,7 +987,7 @@ export default function PlanCanvas({
               camera={camera}
               selectItem={onSelect}
               editNote={beginNoteEdit}
-              noteToolActive={activeTool === "note"}
+              noteToolActive={activeTool === "note" && !spaceDown}
               onUpdate={onUpdate}
             />
           ))}
