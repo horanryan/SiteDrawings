@@ -298,6 +298,12 @@ kbd { border-color: #e1e8e8; border-radius: 5px; background: #f8fafa; font-famil
 .guide-row kbd { padding: 3px 5px; }
 .inspector-footer { padding: 0 22px; color: #718488; border-color: #e9eded; font-size: 10px; }
 .toast, .connect-dialog { border-radius: 14px; }
+.toast-warning { z-index: 40; bottom: max(48px, env(safe-area-inset-bottom)); display: flex; align-items: flex-start; gap: 12px; width: min(440px, calc(100vw - 32px)); padding: 16px; color: #4d2900; border: 2px solid #c96c00; background: #fff5df; box-shadow: 0 8px 30px #0005; font-size: 14px; line-height: 1.45; }
+.toast-warning-icon { display: grid; flex: 0 0 28px; height: 28px; place-items: center; color: white; border-radius: 50%; background: #a84f00; font-weight: 800; }
+.toast-warning strong, .toast-warning div span { display: block; }
+.toast-warning strong { margin-bottom: 3px; font-size: 15px; }
+.toast-warning button { flex: 0 0 36px; height: 36px; margin: -6px -6px -6px auto; color: #4d2900; border: 0; border-radius: 8px; background: transparent; cursor: pointer; font-size: 24px; line-height: 1; }
+.toast-warning button:hover, .toast-warning button:focus-visible { background: #f7dfb3; }
 button:focus-visible, input:focus-visible { outline-color: #65cbd2; }
 @media (max-width: 1050px) {
   .brand { flex-basis: 175px; }

@@ -247,6 +247,7 @@ function App() {
     initialDrawing.error || "All changes saved",
   );
   const [toast, setToast] = useState("");
+  const [toastWarning, setToastWarning] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
   const undoStack = useRef<DrawingItem[][]>([]);
@@ -411,10 +412,11 @@ function App() {
     setShapeMenu((current) => current ? null : { left: rect.right + 8, top: Math.max(8, Math.min(rect.top, window.innerHeight - 460)) });
   }
 
-  function showToast(message: string) {
+  function showToast(message: string, warning = false) {
     setToast(message);
+    setToastWarning(warning);
     if (toastTimer.current !== undefined) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(""), 2400);
+    toastTimer.current = window.setTimeout(() => setToast(""), warning ? 8000 : 2400);
   }
 
   function updateCoordinates(point: Point) {
@@ -429,7 +431,7 @@ function App() {
     const previous = itemsRef.current;
     if (JSON.stringify(previous) === JSON.stringify(next)) return false;
     if (hasNewLineOverlap(previous, next)) {
-      showToast("A line already occupies that space. Connect to it or draw beside it.");
+      showToast("A line already occupies that space. Connect to it or draw beside it.", true);
       return false;
     }
     if (!isDrawingFile({ version: 1, name: projectName.trim() || "Untitled plan", gridFeet, items: next })) {
@@ -853,7 +855,13 @@ function App() {
         </div>
       )}
 
-      {toast && <div className="toast" role="status" aria-live="polite">{toast}</div>}
+      {toast && (toastWarning ? (
+        <div className="toast toast-warning" role="alert">
+          <span aria-hidden="true" className="toast-warning-icon">!</span>
+          <div><strong>Overlapping line</strong><span>{toast}</span></div>
+          <button type="button" aria-label="Dismiss warning" onClick={() => setToast("")}>×</button>
+        </div>
+      ) : <div className="toast" role="status" aria-live="polite">{toast}</div>)}
     </div>
   );
 }
