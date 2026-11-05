@@ -259,11 +259,14 @@ export function distance(start: Point, end: Point): number {
 
 export function formatFeetInches(feetValue: number): string {
   const sign = feetValue < 0 ? "−" : "";
-  const eighths = Math.round(Math.abs(feetValue) * 96);
-  const feet = Math.floor(eighths / 96);
-  const remaining = eighths % 96;
-  const inches = Math.floor(remaining / 8);
-  const fraction = EIGHTH_INCHES[remaining % 8];
+  const thirtySeconds = Math.round(Math.abs(feetValue) * 384);
+  const feet = Math.floor(thirtySeconds / 384);
+  const remaining = thirtySeconds % 384;
+  const inches = Math.floor(remaining / 32);
+  const numerator = remaining % 32;
+  // Keep familiar eighth-inch glyphs; write finer fractions in a parseable form.
+  const fraction = numerator % 4 === 0 ? EIGHTH_INCHES[numerator / 4]
+    : numerator % 2 === 0 ? ` ${numerator / 2}/16` : ` ${numerator}/32`;
   return `${sign}${feet}′ ${inches}${fraction}″`;
 }
 

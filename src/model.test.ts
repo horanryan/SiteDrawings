@@ -140,6 +140,12 @@ describe("plan measurements", () => {
     expect(formatFeetInches(1.5)).toBe("1′ 6″");
     expect(formatFeetInches(2 + 5.5 / 12)).toBe("2′ 5½″");
     expect(formatFeetInches(0.125)).toBe("0′ 1½″");
+    expect(formatFeetInches(9.004229526018978)).toBe("9′ 0 1/16″");
+    expect(formatFeetInches(1 + (11 + 31.6 / 32) / 12)).toBe("2′ 0″");
+    for (let numerator = 0; numerator < 32; numerator++) {
+      const length = 2 + (5 + numerator / 32) / 12;
+      expect(parseFeetInches(formatFeetInches(length))).toBeCloseTo(length, 10);
+    }
   });
 
   it("resizes a line without changing its direction", () => {
