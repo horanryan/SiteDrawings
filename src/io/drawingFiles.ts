@@ -147,7 +147,8 @@ export function downloadFile(name: string, content: BlobPart, type: string) {
   document.body.appendChild(link);
   link.click();
   link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  // Mobile browsers may need more time to start the download.
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 export function safeFileName(name: string) {

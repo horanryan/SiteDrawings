@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Trash2, ChevronDown } from "lucide-react";
+import { Trash2, ChevronDown, X } from "lucide-react";
 import { QUICK_GUIDE } from "../shortcuts";
 import {
   distance,
@@ -11,6 +11,7 @@ import {
 import type { DrawingItem } from "../model";
 
 interface InspectorProps {
+  onClose: () => void;
   guideOpen: boolean;
   onToggleGuide: () => void;
   item: DrawingItem | undefined;
@@ -116,6 +117,7 @@ function TextProperty({
 }
 
 export default function Inspector({
+  onClose,
   guideOpen,
   onToggleGuide,
   item,
@@ -188,7 +190,7 @@ export default function Inspector({
           <span className="eyebrow">PLAN DETAILS</span>
           <h2>Properties</h2>
         </div>
-        <span className="inspector-mark">⌖</span>
+        <button className="inspector-close" aria-label="Close properties" title="Close properties" onClick={onClose}><X size={18} /></button>
       </div>
 
       <div className="inspector-scroll">

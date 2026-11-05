@@ -16,6 +16,10 @@ import {
   Moon,
   Sun,
   Trash2,
+  RotateCcw,
+  PanelRight,
+  CheckSquare2,
+  ListChecks,
   Circle,
   Download,
   FileImage,
@@ -38,6 +42,7 @@ import {
 } from "lucide-react";
 import Inspector from "./components/Inspector";
 import { TOOL_SHORTCUTS, ACTION_SHORTCUTS, toolForKey } from "./shortcuts";
+import { clearSavedDrawing } from "./reset";
 import logo from "./assets/rh-trace.svg";
 import PlanCanvas, { DEFAULT_CAMERA } from "./components/PlanCanvas";
 import {
@@ -217,6 +222,7 @@ function App() {
   const [items, setItems] = useState(() => assignLayerNames(initialDrawing.file.items));
   const itemsRef = useRef(items);
   const autosaveAllowed = useRef(!initialDrawing.error);
+  const autosaveTimerRef = useRef<number | undefined>(undefined);
   const [projectName, setProjectName] = useState(initialDrawing.file.name);
   const [gridFeet, setGridFeet] = useState(initialDrawing.file.gridFeet);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -226,6 +232,9 @@ function App() {
     catch { return "light"; }
   });
   const [layersOpen, setLayersOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(() => window.innerWidth > 850);
+  const [multiSelect, setMultiSelect] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(true);
   const [shapeMenu, setShapeMenu] = useState<{ left: number; top: number } | null>(null);
   const [gridSnap, setGridSnap] = useState(true);
@@ -255,6 +264,10 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
+    if (activeTool !== "select") setMultiSelect(false);
+  }, [activeTool]);
+
+  useEffect(() => {
     itemsRef.current = items;
   }, [items]);
 
@@ -279,7 +292,11 @@ function App() {
         setSaveMessage("Browser storage is unavailable");
       }
     }, 350);
-    return () => window.clearTimeout(timer);
+    autosaveTimerRef.current = timer;
+    return () => {
+      window.clearTimeout(timer);
+      if (autosaveTimerRef.current === timer) autosaveTimerRef.current = undefined;
+    };
   }, [gridFeet, items, projectName]);
 
   useEffect(() => {
@@ -287,6 +304,11 @@ function App() {
       const target = event.target;
       const editing = target instanceof HTMLElement &&
         target.matches("input, textarea, select, [contenteditable=true]");
+
+      if (resetOpen) {
+        if (event.key === "Escape") setResetOpen(false);
+        return;
+      }
 
       if (event.code === "Space" && !editing) {
         if (target instanceof HTMLElement && target.matches(":focus-visible") && target.closest("button, a, [role=button]")) return;
@@ -321,7 +343,7 @@ function App() {
         setShapeMenu(null);
       } else if (!event.ctrlKey && !event.metaKey && !event.altKey) {
         const key = event.key.toLowerCase();
-        if (key === ACTION_SHORTCUTS.layers.toLowerCase()) setLayersOpen((open) => !open);
+        if (key === ACTION_SHORTCUTS.layers.toLowerCase()) toggleLayers();
         else if (key === ACTION_SHORTCUTS.guide.toLowerCase()) setGuideOpen((open) => !open);
         else if (key === ACTION_SHORTCUTS.fit.toLowerCase()) fitToPlan();
         else if (key === ACTION_SHORTCUTS.shapes.toLowerCase()) toggleShapeMenu();
@@ -350,7 +372,38 @@ function App() {
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", releaseSpace);
     };
-  }, [gridFeet, projectName, selectedIds, items]);
+  }, [gridFeet, projectName, selectedIds, items, resetOpen, layersOpen]);
+
+  function toggleLayers() {
+    if (!layersOpen && window.innerWidth <= 850) setInspectorOpen(false);
+    setLayersOpen(!layersOpen);
+  }
+
+  function toggleInspector() {
+    if (!inspectorOpen && window.innerWidth <= 850) setLayersOpen(false);
+    setInspectorOpen(!inspectorOpen);
+  }
+
+  function resetDrawing() {
+    // Only the current job's browser-local drawing is removed; no undo state remains.
+    try { clearSavedDrawing(localStorage, storageKey(), undoStack.current, redoStack.current); }
+    catch (error) { console.error("Could not reset the saved drawing.", error); showToast("Could not reset browser storage. Your drawing is still open."); setResetOpen(false); return; }
+    // Cancel any pending write of the old drawing before replacing it.
+    if (autosaveTimerRef.current !== undefined) window.clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = undefined;
+    autosaveAllowed.current = true;
+    itemsRef.current = [];
+    setItems([]);
+    setSelectedIds([]);
+    setProjectName("New construction plan");
+    setGridFeet(1);
+    setCamera(DEFAULT_CAMERA);
+    setActiveTool("select");
+    setMultiSelect(false);
+    setResetOpen(false);
+    setSaveMessage("Drawing reset");
+    showToast("Drawing reset.");
+  }
 
   function toggleShapeMenu() {
     const rect = shapeButtonRef.current?.getBoundingClientRect();
@@ -579,7 +632,7 @@ function App() {
 
   return (
     <div className="app-shell" data-theme={theme}>
-      <header className="topbar">
+      <header className="topbar" inert={resetOpen || undefined}>
         <a className="brand" href="#" aria-label="TRACE Site Drawings">
           <span className="brand-mark"><img src={logo} alt="" /></span>
           <span className="brand-copy">
@@ -632,13 +685,14 @@ function App() {
             accept=".json,application/json"
             onChange={(event) => void importDrawing(event.target.files?.[0])}
           />
-          <button className="button button-primary" onClick={saveNow}>
+          <button className="button button-primary" onClick={saveNow} aria-label="Save drawing">
             <Save size={16} /> Save drawing
           </button>
+          <button className="button button-outline reset-trigger" onClick={() => { setExportOpen(false); setResetOpen(true); }} aria-label="Reset drawing" title="Reset drawing"><RotateCcw size={16} /> Reset</button>
         </div>
       </header>
 
-      <div className="workspace">
+      <div className="workspace" inert={resetOpen || undefined}>
         <aside className="tool-rail" aria-label="Drawing tools">
           <span className="tool-caption">TOOLS</span>
           <div className="tool-group">
@@ -653,7 +707,8 @@ function App() {
               </>}
             </span>)}
           </div>
-          <button className={`tool-button layers-toggle ${layersOpen ? "active" : ""}`} aria-pressed={layersOpen} title="Toggle layers (Y)" onClick={() => setLayersOpen(!layersOpen)}><Layers size={19} strokeWidth={1.7} /><span>Layers</span></button>
+          <button className={`tool-button layers-toggle ${layersOpen ? "active" : ""}`} aria-pressed={layersOpen} title="Toggle layers (Y)" onClick={toggleLayers}><Layers size={19} strokeWidth={1.7} /><span>Layers</span></button>
+          <button className={`tool-button panel-toggle ${inspectorOpen ? "active" : ""}`} aria-pressed={inspectorOpen} title="Toggle properties" onClick={toggleInspector}><PanelRight size={19} strokeWidth={1.7} /><span>Properties</span></button>
           <div className="rail-bottom" hidden>
             <button
               className="tool-button help-tool"
@@ -677,9 +732,9 @@ function App() {
           </div>
           <div className="layers-list">{items.length === 0 ? <p className="layers-empty">Draw a line or shape and it will appear here.</p> : [...items].reverse().map((item) => {
             const detail = item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" ? formatFeetInches(itemLength(item)) : item.kind === "note" ? (item.label || "Note") : "";
-            return <button key={item.id} className={`layer-row ${selectedIds.includes(item.id) ? "selected" : ""}`} aria-pressed={selectedIds.includes(item.id)} onClick={(event) => { setSelectedIds((current) => updateSelection(current, item.id, event.ctrlKey || event.metaKey)); setActiveTool("select"); }}><span className="layer-swatch" style={{ backgroundColor: item.color }} /><span className="layer-copy"><strong>{item.layerName}</strong><small>{detail || "Drawing element"}</small></span></button>;
+            return <button key={item.id} className={`layer-row ${selectedIds.includes(item.id) ? "selected" : ""}`} aria-pressed={selectedIds.includes(item.id)} onClick={(event) => { setSelectedIds((current) => updateSelection(current, item.id, event.ctrlKey || event.metaKey || multiSelect)); setActiveTool("select"); }}><span className="layer-swatch" style={{ backgroundColor: item.color }} /><span className="layer-copy"><strong>{item.layerName}</strong><small>{detail || "Drawing element"}</small></span></button>;
           })}</div>
-          <p className="layers-footer">Select a layer to edit. Ctrl-click to select more.</p>
+          <p className="layers-footer">Select a layer to edit. Use Multi-select to select more.</p>
         </aside>}
 
         <main className="drawing-area">
@@ -688,6 +743,11 @@ function App() {
               <span>Workspace</span><span className="crumb-separator">/</span><strong>Plan editor</strong>
             </div>
             <div className="canvas-actions">
+              <button className={`canvas-action-button ${multiSelect ? "active" : ""}`} aria-pressed={multiSelect} title="Select multiple items" onClick={() => { setActiveTool("select"); setMultiSelect((active) => !active); }}><CheckSquare2 size={16} /><span>Multi-select</span></button>
+              <button className="canvas-action-button" aria-label="Select all items" title="Select all items" disabled={!items.length} onClick={() => { setSelectedIds(itemsRef.current.map((item) => item.id)); setActiveTool("select"); setMultiSelect(true); }}><ListChecks size={16} /></button>
+              <button className="canvas-action-button" aria-label="Duplicate selected items" title="Duplicate selected items" disabled={!selectedIds.length} onClick={duplicateSelected}><Copy size={16} /></button>
+              <button className="canvas-action-button" aria-label="Delete selected items" title="Delete selected items" disabled={!selectedIds.length} onClick={deleteSelected}><Trash2 size={16} /></button>
+              <span className="action-divider" />
               <label className="toggle-control">
                 <input type="checkbox" checked={gridSnap} onChange={(event) => setGridSnap(event.target.checked)} />
                 <span className="toggle-track" /><span>Grid snap</span>
@@ -720,6 +780,7 @@ function App() {
             theme={theme}
             selectedIds={selectedIds}
             activeTool={activeTool}
+            multiSelect={multiSelect}
             gridFeet={gridFeet}
             gridSnap={gridSnap}
             objectSnap={objectSnap}
@@ -730,8 +791,7 @@ function App() {
             onCameraChange={setCamera}
             onCreate={createItem}
             onCreatePolygon={createPolygon}
-            onChooseTool={setActiveTool}
-            onSelect={(id, additive = false) => setSelectedIds((current) => updateSelection(current, id, additive))}
+            onSelect={(id, additive = false) => setSelectedIds((current) => updateSelection(current, id, additive || (multiSelect && id !== null)))}
             onBoxSelect={(ids, additive) => setSelectedIds((current) => additive ? [...new Set([...current, ...ids])] : ids)}
             onUpdate={updateItem}
             onUpdateItems={commitItems}
@@ -746,7 +806,8 @@ function App() {
           </footer>
         </main>
 
-        <Inspector
+        {inspectorOpen && <Inspector
+          onClose={() => setInspectorOpen(false)}
           guideOpen={guideOpen}
           onToggleGuide={() => setGuideOpen((open) => !open)}
           item={selectedItem}
@@ -758,8 +819,17 @@ function App() {
           }}
           onUpdate={updateItem}
           onDelete={deleteSelected}
-        />
+        />}
       </div>
+
+      {resetOpen && <div className="dialog-backdrop">
+        <section className="connect-dialog reset-dialog" role="alertdialog" aria-modal="true" aria-labelledby="reset-title" aria-describedby="reset-description">
+          <span className="dialog-kicker">RESET DRAWING</span>
+          <h2 id="reset-title">Reset this drawing?</h2>
+          <p id="reset-description">This permanently clears this drawing and its undo history. You cannot undo the reset. Export drawing data first if you want a backup.</p>
+          <div className="reset-actions"><button className="button reset-cancel" autoFocus onClick={() => setResetOpen(false)}>Cancel</button><button className="button reset-confirm" onClick={resetDrawing}>Reset drawing</button></div>
+        </section>
+      </div>}
 
       {connectOpen && (
         <div className="dialog-backdrop" onMouseDown={(event) => {

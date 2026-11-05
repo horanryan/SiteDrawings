@@ -451,3 +451,82 @@ button:focus-visible, input:focus-visible { outline-color: #65cbd2; }
 .guide-toggle:hover { color: #168b97; }
 .guide-row kbd { flex: 0 0 auto; white-space: nowrap; }
 @media (pointer: coarse) { .guide-toggle { min-height: 44px; } }
+
+/* Touch-friendly controls and panels. */
+.workspace { position: relative; }
+.panel-toggle { margin: 0 0 12px; }
+.inspector-close { display: grid; width: 36px; height: 36px; place-items: center; border: 1px solid #dce8e8; border-radius: 10px; color: #527178; background: #f1f8f8; cursor: pointer; }
+.inspector-close:hover { background: #e0f3f4; }
+.canvas-action-button { display: inline-flex; min-width: 30px; height: 32px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 5px; padding: 0 7px; color: #526c72; border: 1px solid #dfe9e9; border-radius: 8px; background: #fff; font-size: 11px; white-space: nowrap; cursor: pointer; }
+.canvas-action-button.active { color: #086d78; border-color: #9dd9dd; background: #ddf4f5; }
+.canvas-action-button:disabled { opacity: .35; cursor: default; }
+[data-theme="dark"] .canvas-action-button, [data-theme="dark"] .inspector-close { color: #c3dadd; border-color: #34515a; background: #1d353d; }
+[data-theme="dark"] .canvas-action-button.active { color: #8cecf2; border-color: #4c9da5; background: #1d4a52; }
+.reset-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.reset-cancel { color: #344c52; border-color: #d4e2e2; background: #fff; }
+.reset-confirm { color: #fff; background: #b83232; }
+.reset-confirm:hover { background: #932929; }
+[data-theme="dark"] .reset-cancel { color: #e1eff0; border-color: #41616a; background: #243f48; }
+.canvas-toolbar { overscroll-behavior-x: contain; }
+.canvas-actions { flex: 0 0 auto; }
+@media (max-width: 850px) {
+  .tool-rail .tool-caption { order: 0; }
+  .tool-rail .layers-toggle { order: 1; margin: 0 0 3px; }
+  .tool-rail .panel-toggle { order: 2; margin: 0 0 8px; }
+  .tool-rail .tool-group { order: 3; }
+  .inspector { position: absolute; z-index: 4; top: 0; right: 0; bottom: 0; width: min(330px, calc(100% - 68px)); box-shadow: -12px 0 35px rgb(0 0 0 / 18%); }
+  .layers-panel { top: 0; bottom: 0; left: 68px; z-index: 4; }
+  .canvas-toolbar { touch-action: pan-x; -webkit-overflow-scrolling: touch; }
+  .canvas-action-button, .zoom-button, .fit-button { min-width: 44px; min-height: 44px; }
+  .inspector-close { min-width: 44px; min-height: 44px; }
+}
+@media (max-width: 760px) {
+  .layers-panel { left: 60px; }
+  .inspector { width: min(330px, calc(100% - 60px)); }
+}
+@media (max-width: 600px) {
+  .topbar { flex: 0 0 auto; flex-wrap: wrap; gap: 4px 10px; min-height: 108px; padding-top: env(safe-area-inset-top); padding-bottom: 5px; }
+  .brand { flex: 0 0 40px; }
+  .project-title { flex: 1 1 calc(100% - 52px); }
+  .project-title input { font-size: 16px; }
+  .top-actions { width: 100%; justify-content: space-between; gap: 2px; }
+  .top-actions .button, .top-actions .icon-button { width: 44px; height: 44px; min-width: 44px; padding: 0; font-size: 0; }
+  .top-actions .button svg, .top-actions .icon-button svg { width: 19px; height: 19px; }
+  .top-actions .chevron, .top-actions .top-divider { display: none; }
+  .export-wrap { flex: 0 0 44px; }
+  .export-menu { top: 48px; right: -44px; }
+  .canvas-toolbar { justify-content: flex-start; }
+  .canvas-actions { gap: 6px; }
+  .statusbar { font-size: 9px; }
+  .status-coordinates, .status-copyright { display: none; }
+  .reset-actions .button { min-height: 44px; }
+}
+@media (pointer: coarse) {
+  .canvas-action-button, .inspector-close { min-width: 44px; min-height: 44px; }
+  .layer-row, .shape-option { min-height: 44px; }
+}
+.canvas-note-editor { position: absolute; z-index: 3; }
+.canvas-note-editor .canvas-note-input { position: static; display: block; width: 100%; }
+.canvas-note-actions { display: flex; justify-content: flex-end; }
+.canvas-note-actions button { min-width: 64px; min-height: 40px; margin-top: 3px; padding: 0 12px; border: 0; border-radius: 8px; color: #0b3439; background: #4dd5e3; font-size: 13px; font-weight: 650; cursor: pointer; }
+@media (pointer: coarse) { .canvas-note-actions button { min-height: 44px; } }
+@media (min-width: 601px) and (max-width: 850px) {
+  .top-actions .button { width: 40px; min-width: 40px; padding: 0; font-size: 0; }
+  .top-actions .button svg { width: 19px; height: 19px; }
+  .top-actions .chevron { display: none; }
+  .export-wrap { flex: 0 0 40px; }
+}
+@media (pointer: coarse) {
+  .project-title input, .scale-input input, .value-input input, .text-input { font-size: 16px; }
+}
+@media (pointer: coarse) and (min-width: 601px) and (max-width: 850px) {
+  .top-actions .button, .top-actions .icon-button { width: 44px; min-width: 44px; height: 44px; }
+}
+.tool-rail { scrollbar-width: thin; scrollbar-color: #496a72 transparent; }
+.tool-rail::-webkit-scrollbar { width: 4px; }
+.tool-rail::-webkit-scrollbar-thumb { border-radius: 4px; background: #496a72; }
+@media (max-width: 1200px) {
+  .job-context, .breadcrumb { display: none; }
+  .canvas-toolbar { justify-content: flex-start; }
+}
+@media (max-width: 1200px) { .workspace:has(.layers-panel) .canvas-toolbar { justify-content: flex-start; } }

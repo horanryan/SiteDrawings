@@ -46,6 +46,7 @@ interface PlanCanvasProps {
   items: DrawingItem[];
   selectedIds: string[];
   activeTool: DrawingTool;
+  multiSelect: boolean;
   gridFeet: number;
   gridSnap: boolean;
   objectSnap: boolean;
@@ -56,7 +57,6 @@ interface PlanCanvasProps {
   onCameraChange: (camera: Camera) => void;
   onCreate: (item: DrawingItem) => boolean;
   onCreatePolygon: (kind: PolygonTool, start: Point, end: Point) => void;
-  onChooseTool: (tool: DrawingTool) => void;
   onSelect: (id: string | null, additive?: boolean) => void;
   onBoxSelect: (ids: string[], additive: boolean) => void;
   onUpdate: (item: DrawingItem) => void;
@@ -145,7 +145,7 @@ function Label({
   );
 }
 
-function LineDrawing({ item, items = [], sections, showOverallDimensions = false, labelPositions }: { item: DrawingItem; items?: DrawingItem[]; sections?: Array<{ start: number; end: number; length: number }>; showOverallDimensions?: boolean; labelPositions?: Point[] }) {
+function LineDrawing({ item, items = [], sections, showOverallDimensions = false, labelPositions, hitWidth = 0.38 }: { item: DrawingItem; items?: DrawingItem[]; sections?: Array<{ start: number; end: number; length: number }>; showOverallDimensions?: boolean; labelPositions?: Point[]; hitWidth?: number }) {
   const dx = item.x2 - item.x;
   const dy = item.y2 - item.y;
   const length = itemLength(item) || 1;
@@ -170,8 +170,8 @@ function LineDrawing({ item, items = [], sections, showOverallDimensions = false
       <Line
         points={points}
         stroke="transparent"
-        strokeWidth={0.38}
-        hitStrokeWidth={0.38}
+        strokeWidth={hitWidth}
+        hitStrokeWidth={hitWidth}
       />
       {item.showDimension && !divided && (
         <Label
@@ -191,14 +191,14 @@ function LineDrawing({ item, items = [], sections, showOverallDimensions = false
   );
 }
 
-function AnnotationArrow({ item }: { item: DrawingItem }) {
+function AnnotationArrow({ item, hitWidth = 0.38 }: { item: DrawingItem; hitWidth?: number }) {
   const dx = item.x2 - item.x, dy = item.y2 - item.y;
-  return <><Arrow points={[0, 0, dx, dy]} stroke={item.color} fill={item.color} strokeWidth={0.06} pointerLength={0.3} pointerWidth={0.22} listening={false} /><Line points={[0, 0, dx, dy]} stroke="transparent" strokeWidth={0.38} hitStrokeWidth={0.38} /></>;
+  return <><Arrow points={[0, 0, dx, dy]} stroke={item.color} fill={item.color} strokeWidth={0.06} pointerLength={0.3} pointerWidth={0.22} listening={false} /><Line points={[0, 0, dx, dy]} stroke="transparent" strokeWidth={hitWidth} hitStrokeWidth={hitWidth} /></>;
 }
 
-function FreehandDrawing({ item }: { item: DrawingItem }) {
+function FreehandDrawing({ item, hitWidth = 0.38 }: { item: DrawingItem; hitWidth?: number }) {
   const points = (item.points ?? []).flatMap((point) => [point.x, point.y]);
-  return <Line points={points} stroke={item.color} strokeWidth={0.06} lineCap="round" lineJoin="round" hitStrokeWidth={0.38} />;
+  return <Line points={points} stroke={item.color} strokeWidth={0.06} lineCap="round" lineJoin="round" hitStrokeWidth={hitWidth} />;
 }
 
 function RectangleDrawing({ item }: { item: DrawingItem }) {
@@ -260,7 +260,7 @@ function CircleDrawing({ item }: { item: DrawingItem }) {
   );
 }
 
-function DimensionDrawing({ item }: { item: DrawingItem }) {
+function DimensionDrawing({ item, hitWidth = 0.38 }: { item: DrawingItem; hitWidth?: number }) {
   const dx = item.x2 - item.x;
   const dy = item.y2 - item.y;
   const length = itemLength(item) || 1;
@@ -300,7 +300,8 @@ function DimensionDrawing({ item }: { item: DrawingItem }) {
       <Line
         points={[start.x, start.y, end.x, end.y]}
         stroke="transparent"
-        strokeWidth={0.38}
+        strokeWidth={hitWidth}
+        hitStrokeWidth={hitWidth}
       />
       {item.showDimension && (
         <Label
@@ -340,6 +341,8 @@ const DrawingShape = memo(function DrawingShape({
   selectItem,
   editNote,
   noteToolActive,
+  canEditNote,
+  multiSelect,
   onUpdate,
 }: {
   item: DrawingItem;
@@ -358,11 +361,16 @@ const DrawingShape = memo(function DrawingShape({
   selectItem: (id: string, additive?: boolean) => void;
   editNote: (item: DrawingItem) => void;
   noteToolActive: boolean;
+  canEditNote: () => boolean;
+  multiSelect: boolean;
   onUpdate: (item: DrawingItem) => void;
 }) {
   const visualItem = { ...item, color: displayColor(item.color, theme) };
+  // Use a larger invisible hit area for touch without changing drawn geometry.
+  const hitWidth = window.matchMedia("(any-pointer: coarse)").matches ? Math.max(0.38, 44 / (PIXELS_PER_FOOT * camera.zoom)) : 0.38;
   const noteBox = item.kind === "note" ? noteSize(item) : null;
-  const notePressRef = useRef<{ x: number; y: number } | null>(null);
+  const notePressRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
+  const multiPressRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
 
   function snapDrag(event: KonvaEventObject<DragEvent>) {
     const position = event.target.position();
@@ -396,26 +404,34 @@ const DrawingShape = memo(function DrawingShape({
       id={item.id}
       name="drawing-item"
       onPointerDown={(event) => {
-        const additive = event.evt.ctrlKey || event.evt.metaKey;
+        const additive = event.evt.ctrlKey || event.evt.metaKey || multiSelect;
         if (item.kind === "note" && noteToolActive) {
-          event.cancelBubble = true;
-          event.evt.preventDefault();
+          event.cancelBubble = event.evt.pointerType !== "touch";
+          notePressRef.current = { x: event.evt.clientX, y: event.evt.clientY, pointerId: event.evt.pointerId };
           selectItem(item.id);
-          editNote(item);
+          return;
+        }
+        if (multiSelect && event.evt.pointerType === "touch") {
+          // Select on release so a second finger can turn the gesture into a pinch.
+          multiPressRef.current = { x: event.evt.clientX, y: event.evt.clientY, pointerId: event.evt.pointerId };
           return;
         }
         if (draggable || additive) {
-          if (draggable && item.kind === "note" && !additive) notePressRef.current = { x: event.evt.clientX, y: event.evt.clientY };
-          event.cancelBubble = true;
+          if (draggable && item.kind === "note" && !additive) notePressRef.current = { x: event.evt.clientX, y: event.evt.clientY, pointerId: event.evt.pointerId };
+          // Touch events also reach the stage so pinch gestures can start over objects.
+          event.cancelBubble = event.evt.pointerType !== "touch";
           // Do not prevent the pointer event: Konva needs it to start a drag.
           selectItem(item.id, additive);
         }
       }}
       onPointerUp={(event) => {
+        const multiStart = multiPressRef.current;
+        multiPressRef.current = null;
+        if (multiStart && multiStart.pointerId === event.evt.pointerId && canEditNote() && Math.hypot(event.evt.clientX - multiStart.x, event.evt.clientY - multiStart.y) < 4) selectItem(item.id, true);
         const start = notePressRef.current;
         notePressRef.current = null;
-        if (start && Math.hypot(event.evt.clientX - start.x, event.evt.clientY - start.y) < 4) {
-          event.cancelBubble = true;
+        if (start && start.pointerId === event.evt.pointerId && canEditNote() && Math.hypot(event.evt.clientX - start.x, event.evt.clientY - start.y) < 4) {
+          event.cancelBubble = event.evt.pointerType !== "touch";
           editNote(item);
         }
       }}
@@ -424,17 +440,17 @@ const DrawingShape = memo(function DrawingShape({
       onDragEnd={finishDrag}
     >
       {item.kind === "freehand" ? (
-        <FreehandDrawing item={visualItem} />
+        <FreehandDrawing item={visualItem} hitWidth={hitWidth} />
       ) : item.kind === "wall" || item.kind === "dashed" ? (
-        <LineDrawing item={{ ...visualItem, showDimension: showDimensions && item.showDimension }} items={items} sections={sectionsByItem.get(item.id)} showOverallDimensions={showOverallDimensions} labelPositions={labelPositions} />
+        <LineDrawing item={{ ...visualItem, showDimension: showDimensions && item.showDimension }} items={items} sections={sectionsByItem.get(item.id)} showOverallDimensions={showOverallDimensions} labelPositions={labelPositions} hitWidth={hitWidth} />
       ) : item.kind === "rectangle" ? (
         <RectangleDrawing item={{ ...visualItem, showDimension: showDimensions && item.showDimension }} />
       ) : item.kind === "circle" ? (
         <CircleDrawing item={{ ...visualItem, showDimension: showDimensions && item.showDimension }} />
       ) : item.kind === "dimension" ? (
-        <DimensionDrawing item={{ ...visualItem, showDimension: showDimensions && item.showDimension }} />
+        <DimensionDrawing item={{ ...visualItem, showDimension: showDimensions && item.showDimension }} hitWidth={hitWidth} />
       ) : item.kind === "arrow" ? (
-        <AnnotationArrow item={visualItem} />
+        <AnnotationArrow item={visualItem} hitWidth={hitWidth} />
       ) : (
         <>
           <Rect width={noteBox?.width} height={noteBox?.height} fill={theme === "dark" ? "rgba(120,200,210,0.04)" : "rgba(30,100,110,0.03)"} stroke={theme === "dark" ? "#46626b" : "#b9cdd0"} strokeWidth={0.02} />
@@ -551,6 +567,7 @@ export default function PlanCanvas({
   theme,
   selectedIds,
   activeTool,
+  multiSelect,
   gridFeet,
   gridSnap,
   objectSnap,
@@ -561,7 +578,6 @@ export default function PlanCanvas({
   onCameraChange,
   onCreate,
   onCreatePolygon,
-  onChooseTool,
   onSelect,
   onBoxSelect,
   onUpdate,
@@ -571,6 +587,7 @@ export default function PlanCanvas({
   const hostRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
+  const [showWelcome, setShowWelcome] = useState(true);
   const [gesture, setGesture] = useState<Gesture | null>(null);
   const [endpointPreview, setEndpointPreview] = useState<DrawingItem[] | null>(null);
   const [editingNote, setEditingNote] = useState<{ id: string; text: string } | null>(null);
@@ -586,6 +603,7 @@ export default function PlanCanvas({
   const panRef = useRef<PanGesture | null>(null);
   const pinchRef = useRef<PinchGesture | null>(null);
   const touchPointsRef = useRef(new Map<number, Point>());
+  const pinchOccurredRef = useRef(false);
   const penPointersRef = useRef(new Set<number>());
   const pixelsPerFoot = PIXELS_PER_FOOT * camera.zoom;
   const selectedLine = selectedIds.length === 1 ? items.find((item) => item.id === selectedIds[0] && (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" || item.kind === "arrow")) : undefined;
@@ -699,6 +717,7 @@ export default function PlanCanvas({
   function startPinch() {
     const points = [...touchPointsRef.current.values()];
     if (points.length < 2) return;
+    pinchOccurredRef.current = true;
     const midpoint = {
       x: (points[0].x + points[1].x) / 2,
       y: (points[0].y + points[1].y) / 2,
@@ -745,7 +764,9 @@ export default function PlanCanvas({
 
   function handlePointerDown(event: PointerEvent, target: Konva.Node) {
     if (event.pointerType === "mouse" && event.button !== 0 && event.button !== 1) return;
-    event.preventDefault();
+    // CSS touch-action blocks browser panning; preserving the event over an
+    // item lets Konva's touch dragging coexist with stage pinch tracking.
+    if (event.pointerType !== "touch") event.preventDefault();
     const pointerTarget = event.target;
     if (pointerTarget instanceof HTMLElement) {
       pointerTarget.setPointerCapture(event.pointerId);
@@ -764,6 +785,7 @@ export default function PlanCanvas({
 
     if (event.pointerType === "touch") {
       if (penPointersRef.current.size > 0) return;
+      if (touchPointsRef.current.size === 0) pinchOccurredRef.current = false;
       touchPointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (touchPointsRef.current.size >= 2) {
         startPinch();
@@ -792,6 +814,8 @@ export default function PlanCanvas({
 
     if (target !== target.getStage() && activeTool === "select") return;
     if (activeTool === "note") {
+      const hitItem = target.findAncestor(".drawing-item", true);
+      if (hitItem && items.some((item) => item.id === hitItem.id() && item.kind === "note")) return;
       const snapped = snap(point).point;
       const note = newItem("note", snapped, snapped);
       if (onCreate(note)) beginNoteEdit(note);
@@ -875,6 +899,7 @@ export default function PlanCanvas({
     if (event.pointerType === "touch") {
       const wasPinching = pinchRef.current !== null;
       touchPointsRef.current.delete(event.pointerId);
+      if (touchPointsRef.current.size === 0) pinchOccurredRef.current = false;
       if (touchPointsRef.current.size < 2) pinchRef.current = null;
       if (panRef.current?.pointerId === event.pointerId) panRef.current = null;
 
@@ -975,7 +1000,7 @@ export default function PlanCanvas({
               item={item}
               theme={theme}
               selected={selectedIds.includes(item.id)}
-              draggable={activeTool === "select" && !spaceDown}
+              draggable={activeTool === "select" && !spaceDown && !multiSelect}
               gridFeet={gridFeet}
               gridSnap={gridSnap}
               objectSnap={objectSnap}
@@ -988,6 +1013,8 @@ export default function PlanCanvas({
               selectItem={onSelect}
               editNote={beginNoteEdit}
               noteToolActive={activeTool === "note" && !spaceDown}
+              canEditNote={() => !pinchOccurredRef.current}
+              multiSelect={multiSelect}
               onUpdate={onUpdate}
             />
           ))}
@@ -1010,19 +1037,19 @@ export default function PlanCanvas({
             </Group>
           )}
           {selectionBox && <Rect x={Math.min(selectionBox.start.x, selectionBox.current.x)} y={Math.min(selectionBox.start.y, selectionBox.current.y)} width={Math.abs(selectionBox.current.x - selectionBox.start.x)} height={Math.abs(selectionBox.current.y - selectionBox.start.y)} fill="rgba(59, 145, 206, 0.12)" stroke="#3b91ce" strokeWidth={1 / pixelsPerFoot} dash={[5 / pixelsPerFoot, 4 / pixelsPerFoot]} listening={false} />}
-          {selectedNote && !editingNote && (() => {
+          {selectedNote && !multiSelect && !editingNote && (() => {
             const { width, height } = noteSize(selectedNote);
             const clamp = (value: number) => Math.max(NOTE_MIN_SIZE, Math.min(NOTE_MAX_SIZE, value));
-            return <Rect x={selectedNote.x + width} y={selectedNote.y + height} width={12 / pixelsPerFoot} height={12 / pixelsPerFoot} offsetX={6 / pixelsPerFoot} offsetY={6 / pixelsPerFoot} fill="white" stroke="#168c9a" strokeWidth={2 / pixelsPerFoot} cornerRadius={2 / pixelsPerFoot} draggable
+            return <Rect x={selectedNote.x + width} y={selectedNote.y + height} width={12 / pixelsPerFoot} height={12 / pixelsPerFoot} offsetX={6 / pixelsPerFoot} offsetY={6 / pixelsPerFoot} fill="white" stroke="#168c9a" strokeWidth={2 / pixelsPerFoot} hitStrokeWidth={44 / pixelsPerFoot} cornerRadius={2 / pixelsPerFoot} draggable
               onPointerDown={(event) => { event.cancelBubble = true; }}
               onMouseDown={(event) => { event.cancelBubble = true; }}
               onTouchStart={(event) => { event.cancelBubble = true; }}
               onDragMove={(event) => { event.cancelBubble = true; const width = clamp(event.target.x() - selectedNote.x); const height = noteSize({ ...selectedNote, noteWidth: width, noteHeight: clamp(event.target.y() - selectedNote.y) }).height; event.target.position({ x: selectedNote.x + width, y: selectedNote.y + height }); setNoteResizePreview({ id: selectedNote.id, width, height }); }}
               onDragEnd={(event) => { event.cancelBubble = true; const width = clamp(event.target.x() - selectedNote.x); const height = noteSize({ ...selectedNote, noteWidth: width, noteHeight: clamp(event.target.y() - selectedNote.y) }).height; if (!event.evt.type.includes("cancel")) onUpdate({ ...selectedNote, noteWidth: width, noteHeight: height }); setNoteResizePreview(null); }} />;
           })()}
-          {activeTool === "select" && selectedLine && (["start", "end"] as const).map((endpoint) => {
+          {activeTool === "select" && !multiSelect && selectedLine && (["start", "end"] as const).map((endpoint) => {
             const shown = displayedItems.find((item) => item.id === selectedLine.id) ?? selectedLine;
-            return <Circle key={`${selectedLine.id}-${endpoint}`} x={endpoint === "start" ? shown.x : shown.x2} y={endpoint === "start" ? shown.y : shown.y2} radius={6 / pixelsPerFoot} hitStrokeWidth={16 / pixelsPerFoot} fill="white" stroke="#287bc0" strokeWidth={2 / pixelsPerFoot} draggable
+            return <Circle key={`${selectedLine.id}-${endpoint}`} x={endpoint === "start" ? shown.x : shown.x2} y={endpoint === "start" ? shown.y : shown.y2} radius={6 / pixelsPerFoot} hitStrokeWidth={44 / pixelsPerFoot} fill="white" stroke="#287bc0" strokeWidth={2 / pixelsPerFoot} draggable
               onPointerDown={(event) => { event.cancelBubble = true; }}
               onMouseDown={(event) => { event.cancelBubble = true; }}
               onTouchStart={(event) => { event.cancelBubble = true; }}
@@ -1049,23 +1076,27 @@ export default function PlanCanvas({
         if (!note) return null;
         const box = noteSize({ ...note, label: editingNote.text });
         const width = Math.min(size.width, Math.max(120, box.width * pixelsPerFoot));
-        const fontSize = Math.max(12, Math.min(32, NOTE_FONT_SIZE * pixelsPerFoot));
+        const minFontSize = window.matchMedia("(any-pointer: coarse)").matches ? 16 : 12;
+        const fontSize = Math.max(minFontSize, Math.min(32, NOTE_FONT_SIZE * pixelsPerFoot));
         const editWidth = Math.max(NOTE_MIN_SIZE, ((width - 8) / (fontSize * 0.6)) * NOTE_CHARACTER_WIDTH + NOTE_PADDING * 2);
         const editLines = wrapNoteText(editingNote.text || "Note", editWidth).length;
         const height = Math.max(64, box.height * pixelsPerFoot, editLines * fontSize * 1.2 + 8, noteInputHeight);
         const left = Math.max(0, Math.min(size.width - width, camera.x + note.x * pixelsPerFoot));
         // Keep the end of a very tall note in view without giving it an internal scrollbar.
-        const top = Math.min(Math.max(0, camera.y + note.y * pixelsPerFoot), size.height - height);
-        return <textarea ref={noteInputRef} className="canvas-note-input" aria-label="Note text" placeholder="Type a note…" maxLength={1000} value={editingNote.text} style={{ left, top, width, height, fontSize }} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => setEditingNote({ ...editingNote, text: event.target.value })} onBlur={finishNoteEdit} onKeyDown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.blur(); } else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelNoteRef.current = true; event.currentTarget.blur(); } }} />;
+        const top = Math.min(Math.max(0, camera.y + note.y * pixelsPerFoot), size.height - height - 44);
+        return <div className="canvas-note-editor" style={{ left, top, width }} onPointerDown={(event) => event.stopPropagation()}>
+          <textarea ref={noteInputRef} className="canvas-note-input" aria-label="Note text" placeholder="Type a note…" maxLength={1000} value={editingNote.text} style={{ height, fontSize }} onChange={(event) => setEditingNote({ ...editingNote, text: event.target.value })} onBlur={finishNoteEdit} onKeyDown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.blur(); } else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelNoteRef.current = true; event.currentTarget.blur(); } }} />
+          <div className="canvas-note-actions"><button type="button" onClick={finishNoteEdit}>Done</button></div>
+        </div>;
       })()}
-      {items.length === 0 && !gesture && activeTool === "select" && (
+      {showWelcome && items.length === 0 && !gesture && activeTool === "select" && (
         <div className="canvas-empty">
           <div className="empty-grid-icon" aria-hidden="true"><span>⌗</span></div>
           <span className="empty-eyebrow">YOUR DRAWING WORKSPACE</span>
-          <strong>Start with a line.</strong>
-          <span>Bring your plan to life, one detail at a time.<br />Each grid square represents {formatFeetInches(gridFeet)}.</span>
-          <button className="button button-outline" onClick={() => onChooseTool("wall")}>
-            Draw a line
+          <strong>Start your plan.</strong>
+          <span>Choose a tool whenever you’re ready.<br />Each grid square represents {formatFeetInches(gridFeet)}.</span>
+          <button className="button button-outline" onClick={() => setShowWelcome(false)}>
+            Open canvas
           </button>
         </div>
       )}
