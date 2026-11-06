@@ -31,7 +31,7 @@ The GitHub Actions workflow tests and builds the app, then deploys it to GitHub 
 
 ## Workflow drawings
 
-Use the **Site sketch / Workflow** switch above the canvas to move between separate browser-local workspaces. Draw a shape and type its label, double-click an existing shape to edit its text, or select it and start typing to replace the label. The Properties panel controls its font, size, alignment, color, and fill. Drag the square handle to resize it. Draw connectors from one shape edge to another to attach them; endpoints follow the shapes as they move or resize. Select a connector and drag its square handle to bend it, or drag an endpoint away to detach it. Each workspace saves independently and has its own drawing data and export options.
+Use the **Site sketch / Workflow** switch above the canvas to move between separate browser-local workspaces. Draw a shape and type its label, double-click an existing shape to edit its text, or select it and start typing to replace the label. The Properties panel controls its font, size, alignment, color, and fill. Drag the square handle to resize it. Draw connectors between shape edges or highlighted connection points to attach them; endpoints follow the shapes as they move or resize. New connectors have rounded right-angle turns; choose a straight or curved style in Properties. Drag the square handle of a curved connector to adjust it, or drag an endpoint away to detach it. Each workspace saves independently and has its own drawing data and export options.
 
 ## Saving and sharing
 

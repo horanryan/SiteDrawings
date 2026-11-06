@@ -1,4 +1,4 @@
-import { formatFeetInches, itemBounds, lineSections, lineSectionsByItem, hasFullDimension, layoutLineLabels, noteSize, visibleNoteLines, NOTE_FONT_SIZE, NOTE_PADDING, NOTE_LINE_HEIGHT, polygonVertices } from "../model";
+import { formatFeetInches, itemBounds, lineSections, lineSectionsByItem, hasFullDimension, layoutLineLabels, noteSize, visibleNoteLines, NOTE_FONT_SIZE, NOTE_PADDING, NOTE_LINE_HEIGHT, polygonVertices, connectorCurvePoints, roundedElbowPath, elbowArrowhead } from "../model";
 import type { DrawingFile, DrawingItem, Point } from "../model";
 
 const EXPORT_SCALE = 72;
@@ -65,6 +65,27 @@ function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDim
   const color = xml(item.color);
 
   if (item.kind === "arrow") {
+    if (item.connectorRoute === "elbow") {
+      const path = `<path d="${roundedElbowPath(item, scale, items)}" transform="translate(${x} ${y})" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+      const head = elbowArrowhead(item, items);
+      if (item.arrowHead === false || head.length === 0) return path;
+      const coords = head.map((value, index) => value * scale + (index % 2 === 0 ? x : y));
+      return `${path}<path d="M ${coords[0]} ${coords[1]} L ${coords[2]} ${coords[3]} L ${coords[4]} ${coords[5]} Z" fill="${color}"/>`;
+    }
+    const curve = connectorCurvePoints(item);
+    if (curve) {
+      const [, first, second] = curve;
+      const c1 = { x: x + first.x * scale, y: y + first.y * scale };
+      const c2 = { x: x + second.x * scale, y: y + second.y * scale };
+      let tangentX = x2 - c2.x, tangentY = y2 - c2.y;
+      if (Math.hypot(tangentX, tangentY) < 1e-9) { tangentX = x2 - c1.x; tangentY = y2 - c1.y; }
+      const tangentLength = Math.hypot(tangentX, tangentY) || 1;
+      const ux = tangentX / tangentLength, uy = tangentY / tangentLength;
+      const head = Math.min(0.3 * scale, tangentLength * 0.7), wing = head * 0.4;
+      const bx = x2 - ux * head, by = y2 - uy * head;
+      const path = `<path d="M ${x} ${y} C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${x2} ${y2}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round"/>`;
+      return item.arrowHead === false ? path : `${path}<path d="M ${x2} ${y2} L ${bx - uy * wing} ${by + ux * wing} L ${bx + uy * wing} ${by - ux * wing} Z" fill="${color}"/>`;
+    }
     const bendX = item.bend ? x + item.bend.x * scale : x;
     const bendY = item.bend ? y + item.bend.y * scale : y;
     const endDx = x2 - bendX, endDy = y2 - bendY;
@@ -73,7 +94,8 @@ function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDim
     const wing = head * 0.4;
     const ux = endDx / endLength, uy = endDy / endLength;
     const bx = x2 - ux * head, by = y2 - uy * head;
-    return `<polyline points="${x},${y} ${bendX},${bendY} ${x2},${y2}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M ${x2} ${y2} L ${bx - uy * wing} ${by + ux * wing} L ${bx + uy * wing} ${by - ux * wing} Z" fill="${color}"/>`;
+    const path = `<polyline points="${x},${y} ${bendX},${bendY} ${x2},${y2}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+    return item.arrowHead === false ? path : `${path}<path d="M ${x2} ${y2} L ${bx - uy * wing} ${by + ux * wing} L ${bx + uy * wing} ${by - ux * wing} Z" fill="${color}"/>`;
   }
 
   if (item.kind === "freehand") {
@@ -106,9 +128,11 @@ function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDim
     const top = Math.min(y, y2);
     const width = Math.abs(dx);
     const height = Math.abs(dy);
-    const shape = item.diagramShape ? `<polygon points="${polygonVertices(item.diagramShape, { x, y }, { x: x2, y: y2 }).map((point) => `${point.x},${point.y}`).join(" ")}" fill="${item.fillColor ?? "rgba(64,124,177,.04)"}" stroke="${color}" stroke-width="2.5"/>` : `<rect x="${left}" y="${top}" width="${width}" height="${height}" fill="${item.fillColor ?? "rgba(64,124,177,.04)"}" stroke="${color}" stroke-width="2.5"/>`;
+    const fill = item.fillColor ?? "rgba(64,124,177,.04)";
+    const shape = item.diagramShape === "ellipse" ? `<ellipse cx="${left + width / 2}" cy="${top + height / 2}" rx="${width / 2}" ry="${height / 2}" fill="${fill}" stroke="${color}" stroke-width="2.5"/>` : item.diagramShape ? `<polygon points="${polygonVertices(item.diagramShape, { x, y }, { x: x2, y: y2 }).map((point) => `${point.x},${point.y}`).join(" ")}" fill="${fill}" stroke="${color}" stroke-width="2.5"/>` : `<rect x="${left}" y="${top}" width="${width}" height="${height}" fill="${fill}" stroke="${color}" stroke-width="2.5"/>`;
+    const detail = item.diagramShape === "subprocess" ? [0.12, 0.88].map((fraction) => `<line x1="${left + width * fraction}" y1="${top}" x2="${left + width * fraction}" y2="${top + height}" stroke="${color}" stroke-width="2"/>`).join("") : "";
     const text = shapeText(item, left, top, width, height);
-    if (!item.showDimension) return shape + text;
+    if (!item.showDimension) return shape + detail + text;
     const widthLabel = item.widthLabel?.trim() || formatFeetInches(width / scale);
     const heightLabel = item.heightLabel?.trim() || formatFeetInches(height / scale);
     return `${shape}${dimensionLabel(widthLabel, left + width / 2, top - 20)}${dimensionLabel(heightLabel, left + width + 22, top + height / 2)}`;

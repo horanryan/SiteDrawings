@@ -30,6 +30,12 @@ import {
   bindConnectorEndpoint,
   resolveConnectorAnchors,
   findConnectorAnchor,
+  shapeConnectionPoints,
+  connectorCurvePoints,
+  roundedElbowPath,
+  elbowArrowhead,
+  connectorElbowPoints,
+  previewConnectedShape,
 } from "./model";
 import type { DrawingFile, PolygonTool } from "./model";
 import { drawingAsSvg } from "./io/drawingFiles";
@@ -418,6 +424,79 @@ describe("drawing file validation", () => {
 
 
 describe("workflow diagrams", () => {
+  it("keeps flowchart shapes editable, snappable, and exportable", () => {
+    for (const diagramShape of ["ellipse", "parallelogram", "subprocess"] as const) {
+      const shape = { ...newItem("rectangle", { x: 0, y: 0 }, { x: 6, y: 4 }), diagramShape, label: "Review", showDimension: false };
+      const file: DrawingFile = { version: 1, name: "Workflow", gridFeet: 1, items: [shape] };
+      expect(isDrawingFile(JSON.parse(JSON.stringify(file)))).toBe(true);
+      expect(shapeConnectionPoints(shape).length).toBe(8);
+      const point = shapeConnectionPoints(shape)[0];
+      expect(findConnectorAnchor(point, [shape], 0.01)?.anchor.shapeId).toBe(shape.id);
+      const svg = drawingAsSvg(file);
+      expect(svg).toContain("Review");
+      expect(svg).toContain(diagramShape === "ellipse" ? "<ellipse " : "<polygon ");
+      if (diagramShape === "subprocess") expect((svg.match(/<line /g) ?? [])).toHaveLength(2);
+    }
+  });
+  it("provides rectangle corners and edge midpoints as stable connection points", () => {
+    const rectangle = newItem("rectangle", { x: 1, y: 2 }, { x: 7, y: 6 });
+    expect(shapeConnectionPoints(rectangle)).toEqual([
+      { x: 1, y: 2 }, { x: 4, y: 2 }, { x: 7, y: 2 }, { x: 7, y: 4 },
+      { x: 7, y: 6 }, { x: 4, y: 6 }, { x: 1, y: 6 }, { x: 1, y: 4 },
+    ]);
+    expect(findConnectorAnchor({ x: 4.1, y: 2.1 }, [rectangle], 0.3)?.point).toEqual({ x: 4, y: 2 });
+    expect(findConnectorAnchor({ x: 2.5, y: 2.1 }, [rectangle], 0.2)?.point).toEqual({ x: 2.5, y: 2 });
+    const circle = newItem("circle", { x: 0, y: 0 }, { x: 2, y: 0 });
+    expect(shapeConnectionPoints(circle)).toHaveLength(8);
+    const diamond = { ...rectangle, diagramShape: "diamond" as const };
+    expect(shapeConnectionPoints(diamond)).toHaveLength(8);
+  });
+  it("rounds right-angle connectors and exports the same path", () => {
+    const arrow = { ...newItem("arrow", { x: 1, y: 1 }, { x: 7, y: 5 }), connectorRoute: "elbow" as const, arrowHead: false };
+    const path = roundedElbowPath(arrow);
+    expect(path).toContain(" Q ");
+    expect(path).toBe("M 0 0 L 0 1.75 Q 0 2 0.25 2 L 5.75 2 Q 6 2 6 2.25 L 6 4");
+    expect(elbowArrowhead(arrow)).toHaveLength(6);
+    const file: DrawingFile = { version: 1, name: "Workflow", gridFeet: 1, items: [arrow] };
+    expect(isDrawingFile(JSON.parse(JSON.stringify(file)))).toBe(true);
+    const svg = drawingAsSvg(file);
+    expect(svg).toContain(`d="${roundedElbowPath(arrow, 72)}"`);
+    expect(svg).not.toContain(' Z" fill="#30465c"');
+    const sideToSide = { ...arrow, startAnchor: { shapeId: "a", u: 1, v: 0.5 }, endAnchor: { shapeId: "b", u: 0, v: 0.5 } };
+    expect(connectorElbowPoints(sideToSide)).toEqual([{ x: 0, y: 0 }, { x: 3, y: 0 }, { x: 3, y: 4 }, { x: 6, y: 4 }]);
+    const sideToTop = { ...sideToSide, endAnchor: { shapeId: "b", u: 0.5, v: 0 } };
+    expect(connectorElbowPoints(sideToTop)).toEqual([{ x: 0, y: 0 }, { x: 6, y: 0 }, { x: 6, y: 4 }]);
+    const target = newItem("rectangle", { x: 0, y: 4 }, { x: 6, y: 6 });
+    const farSide = { ...newItem("arrow", { x: 3, y: 0 }, { x: 3, y: 6 }), connectorRoute: "elbow" as const, endAnchor: { shapeId: target.id, u: 0.5, v: 1 } };
+    const detour = connectorElbowPoints(farSide, [target]);
+    expect(detour).toEqual([{ x: 0, y: 0 }, { x: 0, y: 3.5 }, { x: 3.5, y: 3.5 }, { x: 3.5, y: 6.5 }, { x: 0, y: 6.5 }, { x: 0, y: 6 }]);
+    expect(drawingAsSvg({ ...file, items: [target, farSide] })).toContain(`d="${roundedElbowPath(farSide, 72, [target, farSide])}"`);
+  });
+  it("leaves and enters a corner perpendicular to the shape edge", () => {
+    const source = newItem("rectangle", { x: -8, y: -2 }, { x: -4, y: 0 });
+    const target = newItem("rectangle", { x: 0, y: 4 }, { x: 6, y: 6 });
+    const connector = { ...newItem("arrow", { x: -4, y: 0 }, { x: 0, y: 6 }), connectorRoute: "elbow" as const, startAnchor: { shapeId: source.id, u: 1, v: 1 }, endAnchor: { shapeId: target.id, u: 0, v: 1 } };
+    const points = connectorElbowPoints(connector, [source, target]);
+    expect(points[1].x).toBeGreaterThan(0);
+    expect(points[1].y).toBe(0);
+    const previous = points[points.length - 2], end = points[points.length - 1];
+    expect(previous.x).toBeLessThan(end.x);
+    expect(previous.y).toBe(end.y);
+    const file: DrawingFile = { version: 1, name: "Workflow", gridFeet: 1, items: [source, target, connector] };
+    expect(drawingAsSvg(file)).toContain(`d="${roundedElbowPath(connector, 72, file.items)}"`);
+  });
+  it("renders a smooth curve through its handle and preserves it in saved data and SVG", () => {
+    const arrow = { ...newItem("arrow", { x: 1, y: 1 }, { x: 7, y: 1 }), curve: { x: 3, y: -2 } };
+    const points = connectorCurvePoints(arrow)!;
+    const midpoint = { x: (points[0].x + 3 * points[1].x + 3 * points[2].x + points[3].x) / 8, y: (points[0].y + 3 * points[1].y + 3 * points[2].y + points[3].y) / 8 };
+    expect(midpoint.x).toBeCloseTo(arrow.curve.x);
+    expect(midpoint.y).toBeCloseTo(arrow.curve.y);
+    const file: DrawingFile = { version: 1, name: "Workflow", gridFeet: 1, items: [arrow] };
+    expect(isDrawingFile(JSON.parse(JSON.stringify(file)))).toBe(true);
+    expect(isDrawingFile({ ...file, items: [{ ...arrow, curve: { x: Infinity, y: 0 } }] })).toBe(false);
+    expect(drawingAsSvg(file)).toContain('<path d="M 72 72 C ');
+    expect(moveLineEndpoint(arrow, "start", { x: 2, y: 1 }).curve).toEqual({ x: 2, y: -2 });
+  });
   it("keeps a connector attached as shapes move or resize, and detaches when a shape is deleted", () => {
     const a = newItem("rectangle", { x: 0, y: 0 }, { x: 4, y: 4 });
     const b = newItem("rectangle", { x: 8, y: 0 }, { x: 12, y: 4 });
@@ -434,6 +513,16 @@ describe("workflow diagrams", () => {
     expect(detached.startAnchor).toBeUndefined();
     expect([detached.x, detached.y]).toEqual([6, 3]);
     expect(findConnectorAnchor({ x: 40, y: 40 }, [a], 0.2)).toBeUndefined();
+  });
+  it("previews connected endpoints during a move or resize without changing the original drawing", () => {
+    const shape = newItem("rectangle", { x: 0, y: 0 }, { x: 4, y: 2 });
+    const arrow = bindConnectorEndpoint(newItem("arrow", { x: 4, y: 1 }, { x: 8, y: 1 }), "start", { x: 4, y: 1 }, [shape], 0.2);
+    const saved = [shape, arrow];
+    const moving = previewConnectedShape(saved, moveItem(shape, 3, 2));
+    expect([moving[1].x, moving[1].y]).toEqual([7, 3]);
+    expect([saved[1].x, saved[1].y]).toEqual([4, 1]);
+    const resizing = previewConnectedShape(saved, { ...shape, x2: 6, y2: 4 });
+    expect([resizing[1].x, resizing[1].y]).toEqual([6, 2]);
   });
   it("preserves editable shapes and bent arrows in drawing data and SVG", () => {
     const shape = { ...newItem("rectangle", { x: 0, y: 0 }, { x: 4, y: 2 }), diagramShape: "diamond" as const, label: "Review & approve", showDimension: false };

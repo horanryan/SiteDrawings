@@ -100,6 +100,15 @@ const shapeTools: Array<{ id: DrawingTool; label: string; shortcut: string; icon
   { id: "star", label: "Star", shortcut: TOOL_SHORTCUTS.star, icon: Star },
 ];
 
+const workflowShapes: typeof shapeTools = [
+  { id: "rectangle", label: "Process", shortcut: TOOL_SHORTCUTS.rectangle, icon: Square },
+  { id: "diamond", label: "Decision", shortcut: TOOL_SHORTCUTS.diamond, icon: Diamond },
+  { id: "ellipse", label: "Start / end", shortcut: TOOL_SHORTCUTS.ellipse, icon: Circle },
+  { id: "parallelogram", label: "Input / output", shortcut: TOOL_SHORTCUTS.parallelogram, icon: Pentagon },
+  { id: "subprocess", label: "Subprocess", shortcut: TOOL_SHORTCUTS.subprocess, icon: Square },
+  { id: "circle", label: "Circle", shortcut: TOOL_SHORTCUTS.circle, icon: Circle },
+];
+
 type DrawingMode = "site" | "workflow";
 
 function storageKey(mode: DrawingMode = "site") {
@@ -246,6 +255,7 @@ function App() {
   const [resetOpen, setResetOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(true);
   const [shapeMenu, setShapeMenu] = useState<{ left: number; top: number } | null>(null);
+  const [connectorMenu, setConnectorMenu] = useState<{ left: number; top: number } | null>(null);
   const [gridSnap, setGridSnap] = useState(true);
   const [objectSnap, setObjectSnap] = useState(true);
   const [showDimensions, setShowDimensions] = useState(true);
@@ -263,6 +273,7 @@ function App() {
   const redoStack = useRef<DrawingItem[][]>([]);
   const importRef = useRef<HTMLInputElement>(null);
   const shapeButtonRef = useRef<HTMLButtonElement>(null);
+  const connectorButtonRef = useRef<HTMLButtonElement>(null);
   const coordinatesRef = useRef<HTMLSpanElement>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
@@ -366,6 +377,7 @@ function App() {
         setExportOpen(false);
         setConnectOpen(false);
         setShapeMenu(null);
+        setConnectorMenu(null);
       } else if (!event.ctrlKey && !event.metaKey && !event.altKey) {
         const key = event.key.toLowerCase();
         if (key === ACTION_SHORTCUTS.layers.toLowerCase()) toggleLayers();
@@ -377,7 +389,7 @@ function App() {
         else if (key === ACTION_SHORTCUTS.zoomOut || key === "_") zoomBy(1 / 1.2);
         else {
           const tool = toolForKey(key);
-          if (tool && !(drawingMode === "workflow" && tool === "dimension")) { setActiveTool(tool); setShapeMenu(null); }
+          if (tool && !(drawingMode === "workflow" && tool === "dimension") && !(drawingMode === "site" && ["ellipse", "parallelogram", "subprocess"].includes(tool))) { setActiveTool(tool); setShapeMenu(null); setConnectorMenu(null); }
         }
       }
     }
@@ -421,6 +433,7 @@ function App() {
       setTextEditRequest(null);
       setMultiSelect(false);
       setShapeMenu(null);
+      setConnectorMenu(null);
       setDrawingMode(nextMode);
       try { localStorage.setItem("trace.workspace", nextMode); } catch { /* Keep the workspace usable if this preference cannot be saved. */ }
       setSaveMessage("All changes saved");
@@ -465,7 +478,15 @@ function App() {
   function toggleShapeMenu() {
     const rect = shapeButtonRef.current?.getBoundingClientRect();
     if (!rect) return;
+    setConnectorMenu(null);
     setShapeMenu((current) => current ? null : { left: rect.right + 8, top: Math.max(8, Math.min(rect.top, window.innerHeight - 460)) });
+  }
+
+  function toggleConnectorMenu() {
+    const rect = connectorButtonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setShapeMenu(null);
+    setConnectorMenu((current) => current ? null : { left: rect.right + 8, top: Math.max(8, Math.min(rect.top, window.innerHeight - 210)) });
   }
 
   function showToast(message: string, warning = false) {
@@ -507,6 +528,7 @@ function App() {
   function createItem(item: DrawingItem) {
     let workflowItem = { ...item, showDimension: drawingMode === "workflow" ? false : item.showDimension, ...(drawingMode === "workflow" && (item.kind === "rectangle" || item.kind === "circle") ? { fillColor: "#ffffff" } : {}) };
     if (drawingMode === "workflow" && item.kind === "arrow") {
+      workflowItem.connectorRoute = "elbow";
       workflowItem = bindConnectorEndpoint(workflowItem, "start", { x: item.x, y: item.y }, itemsRef.current, 0.35);
       workflowItem = bindConnectorEndpoint(workflowItem, "end", { x: item.x2, y: item.y2 }, itemsRef.current, 0.35);
     }
@@ -775,9 +797,22 @@ function App() {
         <aside className="tool-rail" aria-label={drawingMode === "workflow" ? "Workflow tools" : "Drawing tools"}>
           <span className="tool-caption">TOOLS</span>
           <div className="tool-group">
-            {tools.filter((tool) => drawingMode === "site" || ["select", "arrow", "note", "wall", "dashed", "freehand"].includes(tool.id)).map((tool) => <span className="tool-slot" key={tool.id}>
-              <ToolButton {...tool} label={drawingMode === "workflow" && tool.id === "arrow" ? "Connector" : tool.label} active={activeTool === tool.id} onClick={(id) => { setActiveTool(id); setShapeMenu(null); }} />
-              {tool.id === "dashed" && <>
+            {tools.filter((tool) => drawingMode === "site" || ["select", "arrow", "note", "freehand"].includes(tool.id)).map((tool) => <span className="tool-slot" key={tool.id}>
+              {drawingMode === "workflow" && tool.id === "arrow" && <>
+                <button className={`tool-button shapes-toggle ${workflowShapes.some((shape) => shape.id === activeTool) ? "active" : ""}`} ref={shapeButtonRef} aria-label="Flowchart shapes" aria-expanded={Boolean(shapeMenu)} aria-haspopup="true" title="Flowchart shapes (B)" onClick={toggleShapeMenu}><Shapes size={19} strokeWidth={1.7} /><span>Shapes</span></button>
+                {shapeMenu && <div className="shapes-menu" style={{ left: shapeMenu.left, top: shapeMenu.top }} role="group" aria-label="Choose a flowchart shape">
+                  <div className="shapes-heading">FLOWCHART SHAPES <button aria-label="Close shapes" onClick={() => setShapeMenu(null)}><X size={15} /></button></div>
+                  {workflowShapes.map(({ id, label, shortcut, icon: Icon }) => <button key={id} className={`shape-option ${activeTool === id ? "selected" : ""}`} aria-pressed={activeTool === id} onClick={() => { setActiveTool(id); setShapeMenu(null); }}><Icon size={17} /><span>{label}</span>{shortcut && <kbd>{shortcut}</kbd>}</button>)}
+                </div>}
+              </>}
+              {drawingMode === "workflow" && tool.id === "arrow" ? <>
+                <button className={`tool-button ${["arrow", "wall", "dashed"].includes(activeTool) ? "active" : ""}`} ref={connectorButtonRef} aria-label="Connector tools" aria-expanded={Boolean(connectorMenu)} aria-haspopup="true" title="Connector tools" onClick={toggleConnectorMenu}><ArrowRight size={19} strokeWidth={1.7} /><span>Connector</span></button>
+                {connectorMenu && <div className="shapes-menu" style={{ left: connectorMenu.left, top: connectorMenu.top }} role="group" aria-label="Choose a connector tool">
+                  <div className="shapes-heading">CONNECTOR TOOLS <button aria-label="Close connector tools" onClick={() => setConnectorMenu(null)}><X size={15} /></button></div>
+                  {([{ id: "arrow", label: "Connector", icon: ArrowRight }, { id: "wall", label: "Line", icon: MoveUpRight }, { id: "dashed", label: "Dashed line", icon: MoveUpRight }] as const).map(({ id, label, icon: Icon }) => <button key={id} className={`shape-option ${activeTool === id ? "selected" : ""}`} aria-pressed={activeTool === id} onClick={() => { setActiveTool(id); setConnectorMenu(null); }}><Icon size={17} /><span>{label}</span><kbd>{TOOL_SHORTCUTS[id]}</kbd></button>)}
+                </div>}
+              </> : <ToolButton {...tool} active={activeTool === tool.id} onClick={(id) => { setActiveTool(id); setShapeMenu(null); setConnectorMenu(null); }} />}
+              {drawingMode === "site" && tool.id === "dashed" && <>
                 <button className={`tool-button shapes-toggle ${shapeTools.some((shape) => shape.id === activeTool) ? "active" : ""}`} ref={shapeButtonRef} aria-label="Shapes" aria-expanded={Boolean(shapeMenu)} aria-haspopup="true" title="Shapes (B)" onClick={toggleShapeMenu}><Shapes size={19} strokeWidth={1.7} /><span>Shapes</span></button>
                 {shapeMenu && <div className="shapes-menu" style={{ left: shapeMenu.left, top: shapeMenu.top }} role="group" aria-label="Choose a shape">
                   <div className="shapes-heading">SHAPES <button aria-label="Close shapes" onClick={() => setShapeMenu(null)}><X size={15} /></button></div>

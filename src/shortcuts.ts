@@ -4,6 +4,7 @@ import type { DrawingTool } from "./model";
 export const TOOL_SHORTCUTS: Record<DrawingTool, string> = {
   select: "V", wall: "L", dashed: "D", rectangle: "R", circle: "C",
   triangle: "T", diamond: "I", pentagon: "P", hexagon: "H", octagon: "O", star: "S",
+  ellipse: "U", parallelogram: "J", subprocess: "K",
   dimension: "M", arrow: "A", note: "N", freehand: "F",
 };
 
@@ -26,6 +27,9 @@ export const QUICK_GUIDE: Array<[string, string]> = [
   [TOOL_SHORTCUTS.hexagon, "Hexagon"],
   [TOOL_SHORTCUTS.octagon, "Octagon"],
   [TOOL_SHORTCUTS.star, "Star"],
+  [TOOL_SHORTCUTS.ellipse, "Start / end"],
+  [TOOL_SHORTCUTS.parallelogram, "Input / output"],
+  [TOOL_SHORTCUTS.subprocess, "Subprocess"],
   [TOOL_SHORTCUTS.dimension, "Dimension"],
   [TOOL_SHORTCUTS.arrow, "Arrow annotation"],
   [TOOL_SHORTCUTS.note, "Add note"],

@@ -7,6 +7,7 @@ import {
   itemLength,
   parseFeetInches,
   resizeLine,
+  diagramShapeLabel,
 } from "../model";
 import type { DrawingItem } from "../model";
 
@@ -254,7 +255,7 @@ export default function Inspector({
           ) : (
             <div className="selection-properties">
               <div className="selected-type">
-                <span>{!showGridSpacing && item.kind === "arrow" ? "Connector" : item.diagramShape ?? (item.kind === "wall" ? "Line" : item.kind)}</span>
+                <span>{!showGridSpacing && item.kind === "arrow" ? "Connector" : !showGridSpacing ? diagramShapeLabel(item) : item.kind === "wall" ? "Line" : item.kind}</span>
                 <span className="selected-dot" style={{ backgroundColor: item.color }} />
               </div>
 
@@ -282,7 +283,15 @@ export default function Inspector({
                 </>
               ) : null}
               {!showGridSpacing && (item.kind === "rectangle" || item.kind === "circle") && <><ShapeTextControls key={item.id} item={item} onUpdate={onUpdate} /><p className="field-help">Double-click a shape to edit its text, or select it and start typing. Drag its square handle to resize it.</p></>}
-              {!showGridSpacing && item.kind === "arrow" && <p className="field-help">Drag the square handle to bend the connector. Drag an endpoint onto a shape edge to attach it.</p>}
+              {!showGridSpacing && item.kind === "arrow" && <>
+                <label className="workflow-field"><span>Connector style</span><select aria-label="Connector style" value={item.connectorRoute === "elbow" ? "elbow" : item.curve ? "curved" : "straight"} onChange={(event) => {
+                  const style = event.target.value;
+                  const dx = item.x2 - item.x, dy = item.y2 - item.y;
+                  onUpdate({ ...item, connectorRoute: style === "elbow" ? "elbow" : undefined, bend: undefined, curve: style === "curved" ? item.curve ?? { x: dx / 2 - dy * 0.2, y: dy / 2 + dx * 0.2 } : undefined });
+                }}><option value="straight">Straight</option><option value="elbow">Rounded right angle</option><option value="curved">Curved</option></select></label>
+                <label className="check-row"><input type="checkbox" checked={item.arrowHead !== false} onChange={(event) => onUpdate({ ...item, arrowHead: event.target.checked })} /><span>Show arrowhead</span></label>
+                <p className="field-help">Drag endpoints onto shape edges or highlighted points to attach them. Curved connectors can be adjusted with the square handle.</p>
+              </>}
               {item.kind === "note" && <p className="field-help">Click the note to edit its text. Drag the lower-right handle to resize; the box grows to fit its text.</p>}
               {showGridSpacing && item.kind === "circle" ? (
                 <DimensionInput
@@ -357,8 +366,8 @@ export default function Inspector({
         <section className="property-section quick-guide">
           <h3><button className="guide-toggle" aria-expanded={guideOpen} aria-controls="quick-guide-content" title="Toggle Quick Guide (G)" onClick={onToggleGuide}>QUICK GUIDE <ChevronDown size={15} className={guideOpen ? "expanded" : ""} /></button></h3>
           {guideOpen && <div id="quick-guide-content">
-            {(showGridSpacing ? QUICK_GUIDE : QUICK_GUIDE.filter(([, description]) => !["Dimension", "Arrow annotation", "Fit drawing", "Save drawing", "Add note", "New line while editing a note", "Finish note editing", "Cancel note edit / select tool / close menus"].includes(description)).concat([["A", "Connector"], ["N", "Text note"], ["0", "Fit workflow"], ["Enter", "New line in shape text"], ["Ctrl/Command + Enter", "Finish editing text"], ["Ctrl/Command + S", "Save workflow"]])).map(([key, description]) => <div className="guide-row" key={`${key}-${description}`}><kbd>{key}</kbd><span>{description}</span></div>)}
-            <p className="field-help guide-tip">{showGridSpacing ? "Drag a note to move it; click it to edit. Start each line where you press and use object snap to connect linework." : "Draw a shape and type to label it. Draw connectors between shape edges; attached endpoints follow shapes when moved. Drag the square handle to bend a connector."}</p>
+            {(showGridSpacing ? QUICK_GUIDE.filter(([, description]) => !["Start / end", "Input / output", "Subprocess"].includes(description)) : QUICK_GUIDE.filter(([, description]) => !["Dimension", "Arrow annotation", "Fit drawing", "Save drawing", "Add note", "Triangle", "Pentagon", "Hexagon", "Octagon", "Star", "New line while editing a note", "Finish note editing", "Cancel note edit / select tool / close menus"].includes(description)).map(([key, description]): [string, string] => [key, description === "Rectangle" ? "Process" : description === "Diamond" ? "Decision" : description]).concat([["A", "Connector"], ["N", "Text note"], ["0", "Fit workflow"], ["Enter", "New line in shape text"], ["Ctrl/Command + Enter", "Finish editing text"], ["Ctrl/Command + S", "Save workflow"]])).map(([key, description]) => <div className="guide-row" key={`${key}-${description}`}><kbd>{key}</kbd><span>{description}</span></div>)}
+            <p className="field-help guide-tip">{showGridSpacing ? "Drag a note to move it; click it to edit. Start each line where you press and use object snap to connect linework." : "Draw connectors between shape edges or highlighted points. Attached endpoints follow shapes when moved. Choose a connector style in Properties."}</p>
           </div>}
         </section>
       </div>
