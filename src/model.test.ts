@@ -27,6 +27,9 @@ import {
   MAX_DRAWING_ITEMS,
   MAX_FREEHAND_POINTS,
   MAX_TOTAL_FREEHAND_POINTS,
+  bindConnectorEndpoint,
+  resolveConnectorAnchors,
+  findConnectorAnchor,
 } from "./model";
 import type { DrawingFile, PolygonTool } from "./model";
 import { drawingAsSvg } from "./io/drawingFiles";
@@ -410,5 +413,50 @@ describe("drawing file validation", () => {
     expect(isDrawingFile(file)).toBe(true);
     expect(isDrawingFile({ ...file, items: [{ ...file.items[0], x: Number.NaN }] })).toBe(false);
     expect(isDrawingFile({ ...file, gridFeet: 0 })).toBe(false);
+  });
+});
+
+
+describe("workflow diagrams", () => {
+  it("keeps a connector attached as shapes move or resize, and detaches when a shape is deleted", () => {
+    const a = newItem("rectangle", { x: 0, y: 0 }, { x: 4, y: 4 });
+    const b = newItem("rectangle", { x: 8, y: 0 }, { x: 12, y: 4 });
+    let arrow = newItem("arrow", { x: 4.1, y: 2 }, { x: 8.1, y: 2 });
+    arrow = bindConnectorEndpoint(arrow, "start", { x: 4.1, y: 2 }, [a, b], 0.2);
+    arrow = bindConnectorEndpoint(arrow, "end", { x: 8.1, y: 2 }, [a, b], 0.2);
+    expect(arrow.startAnchor?.shapeId).toBe(a.id);
+    expect(arrow.endAnchor?.shapeId).toBe(b.id);
+    const movedA = moveItem(a, 2, 1);
+    const resizedB = { ...b, x2: 14, y2: 6 };
+    const updated = resolveConnectorAnchors([movedA, resizedB, arrow])[2];
+    expect([updated.x, updated.y, updated.x2, updated.y2]).toEqual([6, 3, 8, 3]);
+    const detached = resolveConnectorAnchors([resizedB, updated])[1];
+    expect(detached.startAnchor).toBeUndefined();
+    expect([detached.x, detached.y]).toEqual([6, 3]);
+    expect(findConnectorAnchor({ x: 40, y: 40 }, [a], 0.2)).toBeUndefined();
+  });
+  it("preserves editable shapes and bent arrows in drawing data and SVG", () => {
+    const shape = { ...newItem("rectangle", { x: 0, y: 0 }, { x: 4, y: 2 }), diagramShape: "diamond" as const, label: "Review & approve", showDimension: false };
+    const styled = { ...shape, label: "First line\nSecond line", textSize: 20, textFont: "Georgia" as const, textColor: "#123456", fillColor: "#abcdef", textBold: true, textItalic: true, textAlign: "left" as const };
+    const arrow = { ...newItem("arrow", { x: 4, y: 1 }, { x: 8, y: 4 }), bend: { x: 2, y: -2 } };
+    const file: DrawingFile = { version: 1, name: "Workflow", gridFeet: 1, items: [shape, arrow] };
+    expect(isDrawingFile(JSON.parse(JSON.stringify(file)))).toBe(true);
+    expect(isDrawingFile({ ...file, items: [styled] })).toBe(true);
+    expect(isDrawingFile({ ...file, items: [{ ...styled, textSize: 999 }] })).toBe(false);
+    const styledSvg = drawingAsSvg({ ...file, items: [styled] });
+    expect(styledSvg).toContain('font-family="Georgia"');
+    expect(styledSvg).toContain('font-weight="bold"');
+    expect(styledSvg).toContain('font-style="italic"');
+    expect(styledSvg).toContain('fill="#abcdef"');
+    expect(styledSvg).toContain("First line");
+    expect(styledSvg).toContain("Second line");
+    expect(isDrawingFile({ ...file, items: [{ ...arrow, bend: { x: Infinity, y: 0 } }] })).toBe(false);
+    const svg = drawingAsSvg(file);
+    expect(svg).toContain("<polygon points=");
+    expect(svg).toContain("Review &amp; approve");
+    expect(svg).toContain('points="288,72 432,-72 576,288"');
+    expect(itemBounds(arrow).top).toBe(-1);
+    const moved = moveLineEndpoint(arrow, "start", { x: 5, y: 1 });
+    expect(moved.bend).toEqual({ x: 1, y: -2 });
   });
 });

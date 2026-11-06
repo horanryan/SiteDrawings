@@ -60,6 +60,8 @@ import {
   rectangleAsLines,
   polygonAsLines,
   updateSelection,
+  bindConnectorEndpoint,
+  resolveConnectorAnchors,
 } from "./model";
 import { drawingAsPdf } from "./io/drawingPdf";
 import type { DrawingFile, DrawingItem, DrawingTool, Point, PolygonTool } from "./model";
@@ -98,18 +100,19 @@ const shapeTools: Array<{ id: DrawingTool; label: string; shortcut: string; icon
   { id: "star", label: "Star", shortcut: TOOL_SHORTCUTS.star, icon: Star },
 ];
 
-function storageKey() {
+type DrawingMode = "site" | "workflow";
+
+function storageKey(mode: DrawingMode = "site") {
   const params = new URLSearchParams(location.search);
   const jobId = params.get("job_id") || params.get("jobId") || params.get("job.id");
-  return jobId
-    ? `${STORAGE_PREFIX}.job-${encodeURIComponent(jobId)}`
-    : STORAGE_PREFIX;
+  const base = mode === "workflow" ? `${STORAGE_PREFIX}.workflow` : STORAGE_PREFIX;
+  return jobId ? `${base}.job-${encodeURIComponent(jobId)}` : base;
 }
 
-function readDrawing(): DrawingFile {
-  const raw = localStorage.getItem(storageKey());
+function readDrawing(mode: DrawingMode = "site"): DrawingFile {
+  const raw = localStorage.getItem(storageKey(mode));
   if (!raw) {
-    return { version: 1, name: "New construction plan", gridFeet: 1, items: [] };
+    return { version: 1, name: mode === "workflow" ? "Untitled workflow" : "New construction plan", gridFeet: 1, items: [] };
   }
 
   if (raw.length > MAX_DRAWING_FILE_BYTES) {
@@ -208,13 +211,17 @@ function ToolButton({
 }
 
 function App() {
+  const [initialMode] = useState<DrawingMode>(() => {
+    try { return localStorage.getItem("trace.workspace") === "workflow" ? "workflow" : "site"; }
+    catch { return "site"; }
+  });
   const [initialDrawing] = useState(() => {
     try {
-      return { file: readDrawing(), error: "" };
+      return { file: readDrawing(initialMode), error: "" };
     } catch (error) {
       console.error("Could not read the saved plan.", error);
       return {
-        file: { version: 1 as const, name: "New construction plan", gridFeet: 1, items: [] },
+        file: { version: 1 as const, name: initialMode === "workflow" ? "Untitled workflow" : "New construction plan", gridFeet: 1, items: [] },
         error: "Could not read the saved plan. A new drawing is open.",
       };
     }
@@ -227,6 +234,8 @@ function App() {
   const [gridFeet, setGridFeet] = useState(initialDrawing.file.gridFeet);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [activeTool, setActiveTool] = useState<DrawingTool>("select");
+  const [textEditRequest, setTextEditRequest] = useState<{ id: string; text: string; sequence: number } | null>(null);
+  const [drawingMode, setDrawingMode] = useState<DrawingMode>(initialMode);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     try { return localStorage.getItem("trace.theme") === "dark" ? "dark" : "light"; }
     catch { return "light"; }
@@ -265,6 +274,10 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
+    try { localStorage.setItem("trace.workspace", drawingMode); } catch { /* Workspace still works for this session. */ }
+  }, [drawingMode]);
+
+  useEffect(() => {
     if (activeTool !== "select") setMultiSelect(false);
   }, [activeTool]);
 
@@ -286,7 +299,7 @@ function App() {
         items,
       };
       try {
-        localStorage.setItem(storageKey(), JSON.stringify(file));
+        localStorage.setItem(storageKey(drawingMode), JSON.stringify(file));
         setSaveMessage("All changes saved");
       } catch (error) {
         console.error("Could not save this plan in browser storage.", error);
@@ -298,7 +311,7 @@ function App() {
       window.clearTimeout(timer);
       if (autosaveTimerRef.current === timer) autosaveTimerRef.current = undefined;
     };
-  }, [gridFeet, items, projectName]);
+  }, [gridFeet, items, projectName, drawingMode]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -318,6 +331,17 @@ function App() {
         return;
       }
       if (editing) return;
+
+      const selectedShape = drawingMode === "workflow" && activeTool === "select" && selectedIds.length === 1
+        ? itemsRef.current.find((item) => item.id === selectedIds[0] && (item.kind === "rectangle" || item.kind === "circle"))
+        : undefined;
+      const startTyping = event.key.length === 1 && event.key !== " " && !event.ctrlKey && !event.metaKey && !event.altKey;
+      const editKey = (event.key === "F2" || event.key === "Enter") && !(target instanceof HTMLElement && target.closest("button, a, [role=button]"));
+      if (selectedShape && (startTyping || editKey)) {
+        event.preventDefault();
+        setTextEditRequest((request) => ({ id: selectedShape.id, text: startTyping ? event.key : selectedShape.label ?? "", sequence: (request?.sequence ?? 0) + 1 }));
+        return;
+      }
 
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
@@ -353,7 +377,7 @@ function App() {
         else if (key === ACTION_SHORTCUTS.zoomOut || key === "_") zoomBy(1 / 1.2);
         else {
           const tool = toolForKey(key);
-          if (tool) { setActiveTool(tool); setShapeMenu(null); }
+          if (tool && !(drawingMode === "workflow" && tool === "dimension")) { setActiveTool(tool); setShapeMenu(null); }
         }
       }
     }
@@ -373,7 +397,39 @@ function App() {
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", releaseSpace);
     };
-  }, [gridFeet, projectName, selectedIds, items, resetOpen, layersOpen]);
+  }, [gridFeet, projectName, selectedIds, items, resetOpen, layersOpen, drawingMode, activeTool]);
+
+  function switchDrawingMode(nextMode: DrawingMode) {
+    if (nextMode === drawingMode) return;
+    try {
+      // Read before changing state; a damaged destination must not replace the open document.
+      const next = readDrawing(nextMode);
+      if (autosaveAllowed.current) localStorage.setItem(storageKey(drawingMode), JSON.stringify(currentFile()));
+      if (autosaveTimerRef.current !== undefined) window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = undefined;
+      undoStack.current = [];
+      redoStack.current = [];
+      const nextItems = assignLayerNames(next.items);
+      itemsRef.current = nextItems;
+      autosaveAllowed.current = true;
+      setItems(nextItems);
+      setProjectName(next.name);
+      setGridFeet(next.gridFeet);
+      setSelectedIds([]);
+      setCamera(DEFAULT_CAMERA);
+      setActiveTool("select");
+      setTextEditRequest(null);
+      setMultiSelect(false);
+      setShapeMenu(null);
+      setDrawingMode(nextMode);
+      try { localStorage.setItem("trace.workspace", nextMode); } catch { /* Keep the workspace usable if this preference cannot be saved. */ }
+      setSaveMessage("All changes saved");
+      if (coordinatesRef.current) coordinatesRef.current.textContent = "X --  |  Y --";
+    } catch (error) {
+      console.error("Could not switch workspace", error);
+      showToast("Could not switch workspaces. Your current work is still open.");
+    }
+  }
 
   function toggleLayers() {
     if (!layersOpen && window.innerWidth <= 850) setInspectorOpen(false);
@@ -387,7 +443,7 @@ function App() {
 
   function resetDrawing() {
     // Only the current job's browser-local drawing is removed; no undo state remains.
-    try { clearSavedDrawing(localStorage, storageKey(), undoStack.current, redoStack.current); }
+    try { clearSavedDrawing(localStorage, storageKey(drawingMode), undoStack.current, redoStack.current); }
     catch (error) { console.error("Could not reset the saved drawing.", error); showToast("Could not reset browser storage. Your drawing is still open."); setResetOpen(false); return; }
     // Cancel any pending write of the old drawing before replacing it.
     if (autosaveTimerRef.current !== undefined) window.clearTimeout(autosaveTimerRef.current);
@@ -396,14 +452,14 @@ function App() {
     itemsRef.current = [];
     setItems([]);
     setSelectedIds([]);
-    setProjectName("New construction plan");
+    setProjectName(drawingMode === "workflow" ? "Untitled workflow" : "New construction plan");
     setGridFeet(1);
     setCamera(DEFAULT_CAMERA);
     setActiveTool("select");
     setMultiSelect(false);
     setResetOpen(false);
-    setSaveMessage("Drawing reset");
-    showToast("Drawing reset.");
+    setSaveMessage(drawingMode === "workflow" ? "Workflow reset" : "Drawing reset");
+    showToast(`${drawingMode === "workflow" ? "Workflow" : "Drawing"} reset.`);
   }
 
   function toggleShapeMenu() {
@@ -421,16 +477,17 @@ function App() {
 
   function updateCoordinates(point: Point) {
     if (coordinatesRef.current) {
-      coordinatesRef.current.textContent =
-        `X ${point.x.toFixed(2)} ft  ·  Y ${point.y.toFixed(2)} ft`;
+      const unit = drawingMode === "site" ? " ft" : "";
+      coordinatesRef.current.textContent = `X ${point.x.toFixed(2)}${unit}  |  Y ${point.y.toFixed(2)}${unit}`;
     }
   }
 
   function commitItems(next: DrawingItem[]) {
+    if (drawingMode === "workflow") next = resolveConnectorAnchors(next);
     next = assignLayerNames(next);
     const previous = itemsRef.current;
     if (JSON.stringify(previous) === JSON.stringify(next)) return false;
-    if (hasNewLineOverlap(previous, next)) {
+    if (drawingMode === "site" && hasNewLineOverlap(previous, next)) {
       showToast("A line already occupies that space. Connect to it or draw beside it.", true);
       return false;
     }
@@ -448,24 +505,39 @@ function App() {
   }
 
   function createItem(item: DrawingItem) {
-    const created = item.kind === "rectangle" ? rectangleAsLines(item) : [item];
+    let workflowItem = { ...item, showDimension: drawingMode === "workflow" ? false : item.showDimension, ...(drawingMode === "workflow" && (item.kind === "rectangle" || item.kind === "circle") ? { fillColor: "#ffffff" } : {}) };
+    if (drawingMode === "workflow" && item.kind === "arrow") {
+      workflowItem = bindConnectorEndpoint(workflowItem, "start", { x: item.x, y: item.y }, itemsRef.current, 0.35);
+      workflowItem = bindConnectorEndpoint(workflowItem, "end", { x: item.x2, y: item.y2 }, itemsRef.current, 0.35);
+    }
+    const created = item.kind === "rectangle" && drawingMode === "site" ? rectangleAsLines(item) : [workflowItem];
     if (!created.length) {
       showToast("Draw a rectangle with both width and height.");
       return false;
     }
     const next = [...itemsRef.current, ...created];
     if (!commitItems(next)) return false;
+    if (drawingMode === "workflow" && (item.kind === "rectangle" || item.kind === "circle" || item.kind === "arrow")) setActiveTool("select");
     setSelectedIds(created.length === 1 ? [created[0].id] : []);
     return true;
   }
 
   function createPolygon(kind: PolygonTool, start: Point, end: Point) {
-    const created = polygonAsLines(kind, start, end);
-    if (!created.length) { showToast("Draw a shape with both width and height."); return; }
-    if (commitItems([...itemsRef.current, ...created])) setSelectedIds([]);
+    const created = drawingMode === "workflow" && Math.abs(end.x - start.x) > 0.001 && Math.abs(end.y - start.y) > 0.001
+      ? [{ ...newItem("rectangle", start, end), diagramShape: kind, showDimension: false, fillColor: "#ffffff" }]
+      : drawingMode === "workflow" ? [] : polygonAsLines(kind, start, end);
+    if (!created.length) { showToast("Draw a shape with both width and height."); return undefined; }
+    if (!commitItems([...itemsRef.current, ...created])) return undefined;
+    setSelectedIds(created.length === 1 ? [created[0].id] : []);
+    if (drawingMode === "workflow") { setActiveTool("select"); return created[0]; }
+    return undefined;
   }
 
   function updateItem(updated: DrawingItem) {
+    const previous = itemsRef.current.find((item) => item.id === updated.id);
+    if (drawingMode === "workflow" && updated.kind === "arrow" && previous && (updated.x !== previous.x || updated.y !== previous.y || updated.x2 !== previous.x2 || updated.y2 !== previous.y2)) {
+      updated = { ...updated, startAnchor: undefined, endAnchor: undefined };
+    }
     commitItems(itemsRef.current.map((item) => item.id === updated.id ? updated : item));
   }
 
@@ -479,13 +551,16 @@ function App() {
     const selected = itemsRef.current.filter((item) => selectedIds.includes(item.id));
     if (!selected.length) return;
     for (const [dx, dy] of [[1, 2], [2, -1], [-1, -2], [-2, 1]]) {
+      const ids = new Map(selected.map((item) => [item.id, newItem(item.kind, { x: item.x, y: item.y }, { x: item.x2, y: item.y2 }).id]));
       const copies = selected.map((item) => ({
         ...moveItem(item, dx * gridFeet, dy * gridFeet),
         layerName: undefined,
-        id: newItem(item.kind, { x: item.x, y: item.y }, { x: item.x2, y: item.y2 }).id,
+        id: ids.get(item.id)!,
+        startAnchor: item.startAnchor && ids.has(item.startAnchor.shapeId) ? { ...item.startAnchor, shapeId: ids.get(item.startAnchor.shapeId)! } : undefined,
+        endAnchor: item.endAnchor && ids.has(item.endAnchor.shapeId) ? { ...item.endAnchor, shapeId: ids.get(item.endAnchor.shapeId)! } : undefined,
       }));
       const next = [...itemsRef.current, ...copies];
-      if (hasNewLineOverlap(itemsRef.current, next)) continue;
+      if (drawingMode === "site" && hasNewLineOverlap(itemsRef.current, next)) continue;
       if (commitItems(next)) { setSelectedIds(copies.map((item) => item.id)); setActiveTool("select"); }
       return;
     }
@@ -532,9 +607,9 @@ function App() {
   function saveNow() {
     autosaveAllowed.current = true;
     try {
-      localStorage.setItem(storageKey(), JSON.stringify(currentFile()));
-      setSaveMessage("Drawing saved");
-      showToast("Drawing saved in this browser.");
+      localStorage.setItem(storageKey(drawingMode), JSON.stringify(currentFile()));
+      setSaveMessage(drawingMode === "workflow" ? "Workflow saved" : "Drawing saved");
+      showToast(`${drawingMode === "workflow" ? "Workflow" : "Drawing"} saved in this browser.`);
     } catch (error) {
       console.error("Could not save this plan in browser storage.", error);
       setSaveMessage("Browser storage is unavailable");
@@ -578,11 +653,13 @@ function App() {
   }
 
   function handleExport(kind: "svg" | "png" | "json" | "pdf") {
-    const file = drawingForExport();
-    if (kind === "svg") downloadSvg(file, showOverallDimensions);
-    else if (kind === "png") downloadPng(file, showOverallDimensions, showToast);
+    const original = drawingForExport();
+    const file = drawingMode === "workflow" && kind !== "json" ? { ...original, items: original.items.map((item) => ({ ...item, showDimension: false })) } : original;
+    const exportOverallDimensions = drawingMode === "site" && showOverallDimensions;
+    if (kind === "svg") downloadSvg(file, exportOverallDimensions);
+    else if (kind === "png") downloadPng(file, exportOverallDimensions, showToast);
     else if (kind === "pdf") {
-      void drawingAsPdf(file, showOverallDimensions).then((pdf) => downloadFile(`${safeFileName(file.name)}.pdf`, pdf, "application/pdf")).catch((error: unknown) => {
+      void drawingAsPdf(file, exportOverallDimensions).then((pdf) => downloadFile(`${safeFileName(file.name)}.pdf`, pdf, "application/pdf")).catch((error: unknown) => {
         console.error("PDF export failed", error);
         showToast("Could not export the PDF.");
       });
@@ -635,17 +712,17 @@ function App() {
   return (
     <div className="app-shell" data-theme={theme}>
       <header className="topbar" inert={resetOpen || undefined}>
-        <a className="brand" href="#" aria-label="TRACE Site Drawings">
+        <a className="brand" href="#" aria-label={drawingMode === "workflow" ? "TRACE Workflow" : "TRACE Site Drawings"}>
           <span className="brand-mark"><img src={logo} alt="" /></span>
           <span className="brand-copy">
             <strong>TRACE</strong>
-            <small>SITE DRAWINGS</small>
+            <small>{drawingMode === "workflow" ? "WORKFLOW" : "SITE DRAWINGS"}</small>
           </span>
         </a>
         <div className="project-title">
-          <span className="eyebrow">DRAWING</span>
+          <span className="eyebrow">{drawingMode === "workflow" ? "WORKFLOW" : "DRAWING"}</span>
           <input
-            aria-label="Drawing name"
+            aria-label={drawingMode === "workflow" ? "Workflow name" : "Drawing name"}
             value={projectName}
             maxLength={80}
             onChange={(event) => {
@@ -675,8 +752,8 @@ function App() {
                 <button onClick={() => handleExport("svg")}><FileImage size={15} /> Download SVG</button>
                 <button onClick={() => handleExport("png")}><FileImage size={15} /> Download PNG</button>
                 <button onClick={() => handleExport("pdf")}><FileText size={15} /> Download PDF</button>
-                <button onClick={() => handleExport("json")}><FileJson size={15} /> Drawing data</button>
-                <button onClick={() => { setExportOpen(false); importRef.current?.click(); }}><Upload size={15} /> Import drawing</button>
+                <button onClick={() => handleExport("json")}><FileJson size={15} /> {drawingMode === "workflow" ? "Workflow data" : "Drawing data"}</button>
+                <button onClick={() => { setExportOpen(false); importRef.current?.click(); }}><Upload size={15} /> {drawingMode === "workflow" ? "Import workflow" : "Import drawing"}</button>
               </div>
             )}
           </div>
@@ -687,19 +764,19 @@ function App() {
             accept=".json,application/json"
             onChange={(event) => void importDrawing(event.target.files?.[0])}
           />
-          <button className="button button-primary" onClick={saveNow} aria-label="Save drawing">
-            <Save size={16} /> Save drawing
+          <button className="button button-primary" onClick={saveNow} aria-label={drawingMode === "workflow" ? "Save workflow" : "Save drawing"}>
+            <Save size={16} /> {drawingMode === "workflow" ? "Save workflow" : "Save drawing"}
           </button>
-          <button className="button button-outline reset-trigger" onClick={() => { setExportOpen(false); setResetOpen(true); }} aria-label="Reset drawing" title="Reset drawing"><RotateCcw size={16} /> Reset</button>
+          <button className="button button-outline reset-trigger" onClick={() => { setExportOpen(false); setResetOpen(true); }} aria-label={drawingMode === "workflow" ? "Reset workflow" : "Reset drawing"} title={drawingMode === "workflow" ? "Reset workflow" : "Reset drawing"}><RotateCcw size={16} /> Reset</button>
         </div>
       </header>
 
       <div className="workspace" inert={resetOpen || undefined}>
-        <aside className="tool-rail" aria-label="Drawing tools">
+        <aside className="tool-rail" aria-label={drawingMode === "workflow" ? "Workflow tools" : "Drawing tools"}>
           <span className="tool-caption">TOOLS</span>
           <div className="tool-group">
-            {tools.map((tool) => <span className="tool-slot" key={tool.id}>
-              <ToolButton {...tool} active={activeTool === tool.id} onClick={(id) => { setActiveTool(id); setShapeMenu(null); }} />
+            {tools.filter((tool) => drawingMode === "site" || ["select", "arrow", "note", "wall", "dashed", "freehand"].includes(tool.id)).map((tool) => <span className="tool-slot" key={tool.id}>
+              <ToolButton {...tool} label={drawingMode === "workflow" && tool.id === "arrow" ? "Connector" : tool.label} active={activeTool === tool.id} onClick={(id) => { setActiveTool(id); setShapeMenu(null); }} />
               {tool.id === "dashed" && <>
                 <button className={`tool-button shapes-toggle ${shapeTools.some((shape) => shape.id === activeTool) ? "active" : ""}`} ref={shapeButtonRef} aria-label="Shapes" aria-expanded={Boolean(shapeMenu)} aria-haspopup="true" title="Shapes (B)" onClick={toggleShapeMenu}><Shapes size={19} strokeWidth={1.7} /><span>Shapes</span></button>
                 {shapeMenu && <div className="shapes-menu" style={{ left: shapeMenu.left, top: shapeMenu.top }} role="group" aria-label="Choose a shape">
@@ -725,7 +802,7 @@ function App() {
         </aside>
 
         {layersOpen && <aside className="layers-panel" aria-label="Drawing layers">
-          <div className="layers-heading"><div><span className="eyebrow">YOUR PLAN</span><h2>Layers <span>{items.length}</span></h2></div><button className="layers-close" aria-label="Close layers" onClick={() => setLayersOpen(false)}><X size={17} /></button></div>
+          <div className="layers-heading"><div><span className="eyebrow">{drawingMode === "workflow" ? "YOUR WORKFLOW" : "YOUR PLAN"}</span><h2>Layers <span>{items.length}</span></h2></div><button className="layers-close" aria-label="Close layers" onClick={() => setLayersOpen(false)}><X size={17} /></button></div>
           <div className="layers-actions" aria-label="Layer actions">
             <button title="Move layer forward" aria-label="Move layer forward" disabled={selectedIds.length !== 1 || items.findIndex((item) => item.id === selectedIds[0]) === items.length - 1} onClick={() => moveLayer(1)}><ChevronUp size={16} /></button>
             <button title="Move layer backward" aria-label="Move layer backward" disabled={selectedIds.length !== 1 || items.findIndex((item) => item.id === selectedIds[0]) <= 0} onClick={() => moveLayer(-1)}><ChevronDown size={16} /></button>
@@ -733,7 +810,7 @@ function App() {
             <button title="Delete selection" aria-label="Delete selection" disabled={!selectedIds.length} onClick={deleteSelected}><Trash2 size={15} /></button>
           </div>
           <div className="layers-list">{items.length === 0 ? <p className="layers-empty">Draw a line or shape and it will appear here.</p> : [...items].reverse().map((item) => {
-            const detail = item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" ? formatFeetInches(itemLength(item)) : item.kind === "note" ? (item.label || "Note") : "";
+            const detail = drawingMode === "workflow" ? (item.label || "") : item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" ? formatFeetInches(itemLength(item)) : item.kind === "note" ? (item.label || "Note") : "";
             return <button key={item.id} className={`layer-row ${selectedIds.includes(item.id) ? "selected" : ""}`} aria-pressed={selectedIds.includes(item.id)} onClick={(event) => { setSelectedIds((current) => updateSelection(current, item.id, event.ctrlKey || event.metaKey || multiSelect)); setActiveTool("select"); }}><span className="layer-swatch" style={{ backgroundColor: item.color }} /><span className="layer-copy"><strong>{item.layerName}</strong><small>{detail || "Drawing element"}</small></span></button>;
           })}</div>
           <p className="layers-footer">Select a layer to edit. Use Multi-select to select more.</p>
@@ -742,7 +819,10 @@ function App() {
         <main className="drawing-area">
           <div className="canvas-toolbar">
             <div className="breadcrumb">
-              <span>Workspace</span><span className="crumb-separator">/</span><strong>Plan editor</strong>
+              <div className="drawing-mode" role="group" aria-label="Drawing mode">
+                <button className={drawingMode === "site" ? "active" : ""} aria-pressed={drawingMode === "site"} onClick={() => switchDrawingMode("site")}>Site sketch</button>
+                <button className={drawingMode === "workflow" ? "active" : ""} aria-pressed={drawingMode === "workflow"} onClick={() => switchDrawingMode("workflow")}>Workflow</button>
+              </div>
             </div>
             <div className="canvas-actions">
               <button className={`canvas-action-button ${multiSelect ? "active" : ""}`} aria-pressed={multiSelect} title="Select multiple items" onClick={() => { setActiveTool("select"); setMultiSelect((active) => !active); }}><CheckSquare2 size={16} /><span>Multi-select</span></button>
@@ -760,24 +840,25 @@ function App() {
                 <span className="toggle-track" /><span>Object snap</span>
               </label>
               <span className="action-divider" />
-              <label className="toggle-control">
+              {drawingMode === "site" && <label className="toggle-control">
                 <input type="checkbox" checked={showDimensions} onChange={(event) => setShowDimensions(event.target.checked)} />
                 <span className="toggle-track" /><span>Dimensions</span>
-              </label>
-              <span className="action-divider" />
-              <label className="toggle-control">
+              </label>}
+              {drawingMode === "site" && <span className="action-divider" />}
+              {drawingMode === "site" && <label className="toggle-control">
                 <input type="checkbox" checked={showOverallDimensions} onChange={(event) => setShowOverallDimensions(event.target.checked)} />
                 <span className="toggle-track" /><span>Overall dimensions</span>
-              </label>
+              </label>}
               <span className="action-divider" />
               <button className="zoom-button" title="Zoom out (-)" onClick={() => zoomBy(1 / 1.2)}><Minus size={14} /></button>
               <span className="zoom-level">{Math.round(camera.zoom * 100)}%</span>
               <button className="zoom-button" title="Zoom in (+)" onClick={() => zoomBy(1.2)}><Plus size={14} /></button>
-              <button className="fit-button" title="Fit drawing to page (0)" onClick={fitToPlan}><Grid2X2 size={15} /></button>
+              <button className="fit-button" title={drawingMode === "workflow" ? "Fit workflow to page (0)" : "Fit drawing to page (0)"} onClick={fitToPlan}><Grid2X2 size={15} /></button>
             </div>
           </div>
 
           <PlanCanvas
+            key={drawingMode}
             items={items}
             theme={theme}
             selectedIds={selectedIds}
@@ -786,8 +867,10 @@ function App() {
             gridFeet={gridFeet}
             gridSnap={gridSnap}
             objectSnap={objectSnap}
-            showDimensions={showDimensions}
-            showOverallDimensions={showOverallDimensions}
+            workflowMode={drawingMode === "workflow"}
+            textEditRequest={textEditRequest}
+            showDimensions={drawingMode === "site" && showDimensions}
+            showOverallDimensions={drawingMode === "site" && showOverallDimensions}
             spaceDown={spaceDown}
             camera={camera}
             onCameraChange={setCamera}
@@ -815,6 +898,7 @@ function App() {
           item={selectedItem}
           selectedCount={selectedIds.length}
           gridFeet={gridFeet}
+          showGridSpacing={drawingMode === "site"}
           onGridFeetChange={(value) => {
             autosaveAllowed.current = true;
             setGridFeet(value);
@@ -826,10 +910,10 @@ function App() {
 
       {resetOpen && <div className="dialog-backdrop">
         <section className="connect-dialog reset-dialog" role="alertdialog" aria-modal="true" aria-labelledby="reset-title" aria-describedby="reset-description">
-          <span className="dialog-kicker">RESET DRAWING</span>
-          <h2 id="reset-title">Reset this drawing?</h2>
-          <p id="reset-description">This permanently clears this drawing and its undo history. You cannot undo the reset. Export drawing data first if you want a backup.</p>
-          <div className="reset-actions"><button className="button reset-cancel" autoFocus onClick={() => setResetOpen(false)}>Cancel</button><button className="button reset-confirm" onClick={resetDrawing}>Reset drawing</button></div>
+          <span className="dialog-kicker">{drawingMode === "workflow" ? "RESET WORKFLOW" : "RESET DRAWING"}</span>
+          <h2 id="reset-title">Reset this {drawingMode === "workflow" ? "workflow" : "drawing"}?</h2>
+          <p id="reset-description">This permanently clears this {drawingMode === "workflow" ? "workflow" : "drawing"} and its undo history. You cannot undo the reset. Export its data first if you want a backup.</p>
+          <div className="reset-actions"><button className="button reset-cancel" autoFocus onClick={() => setResetOpen(false)}>Cancel</button><button className="button reset-confirm" onClick={resetDrawing}>{drawingMode === "workflow" ? "Reset workflow" : "Reset drawing"}</button></div>
         </section>
       </div>}
 

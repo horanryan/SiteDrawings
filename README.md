@@ -29,6 +29,10 @@ The GitHub Actions workflow tests and builds the app, then deploys it to GitHub 
 - Switch between light and dark appearance using the header button. The preference is stored in the browser. Dark mode adjusts the canvas display for contrast; exports use the saved drawing colors.
 - On iPad and other touchscreens, drag with a finger or Apple Pencil to draw. In Select mode, use Multi-select and tap objects or layers to select several; the canvas toolbar provides Select all, Duplicate, and Delete buttons. In Select mode, drag an item to move it or the background to pan. Use two fingers to pan and pinch-zoom. Test Apple Pencil and palm rejection on the target device and iPadOS version before relying on them in production.
 
+## Workflow drawings
+
+Use the **Site sketch / Workflow** switch above the canvas to move between separate browser-local workspaces. Draw a shape and type its label, double-click an existing shape to edit its text, or select it and start typing to replace the label. The Properties panel controls its font, size, alignment, color, and fill. Drag the square handle to resize it. Draw connectors from one shape edge to another to attach them; endpoints follow the shapes as they move or resize. Select a connector and drag its square handle to bend it, or drag an endpoint away to detach it. Each workspace saves independently and has its own drawing data and export options.
+
 ## Saving and sharing
 
 Use **Reset** to permanently clear the current drawing and its undo history after confirmation. This cannot be undone; export drawing data first if you need a backup. Reset affects only the current browser-local drawing or job.

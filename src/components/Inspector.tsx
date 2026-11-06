@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Trash2, ChevronDown, X } from "lucide-react";
+import { Trash2, ChevronDown, X, AlignLeft, AlignCenter, AlignRight } from "lucide-react";
 import { QUICK_GUIDE } from "../shortcuts";
 import {
   distance,
@@ -17,6 +17,7 @@ interface InspectorProps {
   item: DrawingItem | undefined;
   selectedCount: number;
   gridFeet: number;
+  showGridSpacing: boolean;
   onGridFeetChange: (value: number) => void;
   onUpdate: (item: DrawingItem) => void;
   onDelete: () => void;
@@ -116,6 +117,24 @@ function TextProperty({
   );
 }
 
+function ShapeTextControls({ item, onUpdate }: { item: DrawingItem; onUpdate: (item: DrawingItem) => void }) {
+  const [text, setText] = useState(item.label ?? "");
+  const [size, setSize] = useState(String(item.textSize ?? 14));
+  useEffect(() => setText(item.label ?? ""), [item.id, item.label]);
+  useEffect(() => setSize(String(item.textSize ?? 14)), [item.id, item.textSize]);
+  return <div className="workflow-text-controls">
+    <label className="workflow-field"><span>Text</span><textarea aria-label="Shape text" rows={3} maxLength={1000} value={text} placeholder="Type inside the shape" onChange={(event) => setText(event.target.value)} onBlur={() => { if (text !== (item.label ?? "")) onUpdate({ ...item, label: text }); }} /></label>
+    <label className="workflow-field"><span>Font</span><select aria-label="Font family" value={item.textFont ?? "Arial"} onChange={(event) => onUpdate({ ...item, textFont: event.target.value as DrawingItem["textFont"] })}><option value="Arial">Arial</option><option value="Georgia">Georgia</option><option value="monospace">Monospace</option></select></label>
+    <div className="workflow-format-row"><label className="workflow-field"><span>Size</span><input aria-label="Font size" type="number" min={8} max={72} value={size} onChange={(event) => setSize(event.target.value)} onBlur={() => { const value = Number(size); if (Number.isFinite(value) && value >= 8 && value <= 72) onUpdate({ ...item, textSize: value }); else setSize(String(item.textSize ?? 14)); }} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label>
+      <div className="workflow-format-buttons" aria-label="Text style"><button type="button" title="Bold" aria-label="Bold" aria-pressed={!!item.textBold} onClick={() => onUpdate({ ...item, textBold: !item.textBold })}><b>B</b></button><button type="button" title="Italic" aria-label="Italic" aria-pressed={!!item.textItalic} onClick={() => onUpdate({ ...item, textItalic: !item.textItalic })}><i>I</i></button></div>
+    </div>
+    <div className="workflow-field"><span>Alignment</span><div className="workflow-format-buttons" role="group" aria-label="Text alignment">{(["left", "center", "right"] as const).map((alignment) => <button type="button" key={alignment} aria-label={`Align ${alignment}`} aria-pressed={(item.textAlign ?? "center") === alignment} onClick={() => onUpdate({ ...item, textAlign: alignment })}>{alignment === "left" ? <AlignLeft size={16} /> : alignment === "center" ? <AlignCenter size={16} /> : <AlignRight size={16} />}</button>)}</div></div>
+    <label className="property-row"><span>Text color</span><input aria-label="Text color" className="color-input" type="color" value={item.textColor ?? item.color} onChange={(event) => onUpdate({ ...item, textColor: event.target.value })} /></label>
+    <label className="property-row"><span>Fill color</span><input aria-label="Fill color" className="color-input" type="color" value={item.fillColor ?? "#ffffff"} onChange={(event) => onUpdate({ ...item, fillColor: event.target.value })} /></label>
+    <label className="check-row"><input type="checkbox" checked={item.fillColor === undefined} onChange={(event) => onUpdate({ ...item, fillColor: event.target.checked ? undefined : "#ffffff" })} /><span>Transparent fill</span></label>
+  </div>;
+}
+
 export default function Inspector({
   onClose,
   guideOpen,
@@ -123,6 +142,7 @@ export default function Inspector({
   item,
   selectedCount,
   gridFeet,
+  showGridSpacing,
   onGridFeetChange,
   onUpdate,
   onDelete,
@@ -187,14 +207,14 @@ export default function Inspector({
     <aside className="inspector">
       <div className="inspector-heading">
         <div>
-          <span className="eyebrow">PLAN DETAILS</span>
+          <span className="eyebrow">{showGridSpacing ? "PLAN DETAILS" : "WORKFLOW DETAILS"}</span>
           <h2>Properties</h2>
         </div>
         <button className="inspector-close" aria-label="Close properties" title="Close properties" onClick={onClose}><X size={18} /></button>
       </div>
 
       <div className="inspector-scroll">
-        <section className="property-section">
+        {showGridSpacing && <section className="property-section">
           <h3>GRID SPACING</h3>
           <label className="field-label" htmlFor="grid-feet">One grid square represents</label>
           <div className="scale-input">
@@ -217,7 +237,7 @@ export default function Inspector({
           </div>
           {gridError && <p id="grid-feet-error" className="dimension-error" role="alert">{gridError}</p>}
           <p className="field-help">This is the interval used when snapping new points to the grid.</p>
-        </section>
+        </section>}
 
         <section className="property-section selection-section">
           <h3>SELECTION</h3>
@@ -229,25 +249,25 @@ export default function Inspector({
           ) : !item ? (
             <div className="selection-empty">
               <span className="selection-icon">↖</span>
-              <span>Select a line or shape to edit its measurements.</span>
+              <span>{showGridSpacing ? "Select a line or shape to edit its measurements." : "Select a shape or arrow to edit it."}</span>
             </div>
           ) : (
             <div className="selection-properties">
               <div className="selected-type">
-                <span>{item.kind === "wall" ? "Line" : item.kind}</span>
+                <span>{!showGridSpacing && item.kind === "arrow" ? "Connector" : item.diagramShape ?? (item.kind === "wall" ? "Line" : item.kind)}</span>
                 <span className="selected-dot" style={{ backgroundColor: item.color }} />
               </div>
 
-              <TextProperty label="Layer name" value={item.layerName ?? ""} placeholder="Layer name" maxLength={80} onCommit={(layerName) => onUpdate({ ...item, layerName: layerName.trim() })} />
+              <TextProperty label={showGridSpacing ? "Layer name" : "Object name"} value={item.layerName ?? ""} placeholder={showGridSpacing ? "Layer name" : "Object name"} maxLength={80} onCommit={(layerName) => onUpdate({ ...item, layerName: layerName.trim() })} />
 
-              {item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" ? (
+              {showGridSpacing && (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension") ? (
                 <DimensionInput
                   label="Length"
                   value={itemLength(item)}
                   onCommit={changeLineLength}
                 />
               ) : null}
-              {item.kind === "rectangle" ? (
+              {showGridSpacing && item.kind === "rectangle" ? (
                 <>
                   <DimensionInput
                     label="Width"
@@ -261,8 +281,10 @@ export default function Inspector({
                   />
                 </>
               ) : null}
+              {!showGridSpacing && (item.kind === "rectangle" || item.kind === "circle") && <><ShapeTextControls key={item.id} item={item} onUpdate={onUpdate} /><p className="field-help">Double-click a shape to edit its text, or select it and start typing. Drag its square handle to resize it.</p></>}
+              {!showGridSpacing && item.kind === "arrow" && <p className="field-help">Drag the square handle to bend the connector. Drag an endpoint onto a shape edge to attach it.</p>}
               {item.kind === "note" && <p className="field-help">Click the note to edit its text. Drag the lower-right handle to resize; the box grows to fit its text.</p>}
-              {item.kind === "circle" ? (
+              {showGridSpacing && item.kind === "circle" ? (
                 <DimensionInput
                   label="Diameter"
                   value={distance(
@@ -287,7 +309,7 @@ export default function Inspector({
                 </label>
               )}
 
-              {item.kind === "rectangle" ? (
+              {showGridSpacing && item.kind === "rectangle" ? (
                 <>
                   <TextProperty
                     label="Width label"
@@ -302,7 +324,7 @@ export default function Inspector({
                     onCommit={(heightLabel) => onUpdate({ ...item, heightLabel })}
                   />
                 </>
-              ) : item.kind !== "freehand" && item.kind !== "arrow" && item.kind !== "note" ? (
+              ) : showGridSpacing && item.kind !== "freehand" && item.kind !== "arrow" && item.kind !== "note" ? (
                 <TextProperty
                   label="Dimension label"
                   value={item.label ?? ""}
@@ -311,7 +333,7 @@ export default function Inspector({
                 />
               ) : null}
 
-              {item.kind !== "note" && item.kind !== "freehand" && item.kind !== "arrow" && (
+              {showGridSpacing && item.kind !== "note" && item.kind !== "freehand" && item.kind !== "arrow" && (
                 <label className="check-row">
                   <input
                     type="checkbox"
@@ -335,8 +357,8 @@ export default function Inspector({
         <section className="property-section quick-guide">
           <h3><button className="guide-toggle" aria-expanded={guideOpen} aria-controls="quick-guide-content" title="Toggle Quick Guide (G)" onClick={onToggleGuide}>QUICK GUIDE <ChevronDown size={15} className={guideOpen ? "expanded" : ""} /></button></h3>
           {guideOpen && <div id="quick-guide-content">
-            {QUICK_GUIDE.map(([key, description]) => <div className="guide-row" key={`${key}-${description}`}><kbd>{key}</kbd><span>{description}</span></div>)}
-            <p className="field-help guide-tip">Drag a note to move it; click it to edit. Start each line where you press and use object snap to connect linework.</p>
+            {(showGridSpacing ? QUICK_GUIDE : QUICK_GUIDE.filter(([, description]) => !["Dimension", "Arrow annotation", "Fit drawing", "Save drawing", "Add note", "New line while editing a note", "Finish note editing", "Cancel note edit / select tool / close menus"].includes(description)).concat([["A", "Connector"], ["N", "Text note"], ["0", "Fit workflow"], ["Enter", "New line in shape text"], ["Ctrl/Command + Enter", "Finish editing text"], ["Ctrl/Command + S", "Save workflow"]])).map(([key, description]) => <div className="guide-row" key={`${key}-${description}`}><kbd>{key}</kbd><span>{description}</span></div>)}
+            <p className="field-help guide-tip">{showGridSpacing ? "Drag a note to move it; click it to edit. Start each line where you press and use object snap to connect linework." : "Draw a shape and type to label it. Draw connectors between shape edges; attached endpoints follow shapes when moved. Drag the square handle to bend a connector."}</p>
           </div>}
         </section>
       </div>

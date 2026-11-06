@@ -12,6 +12,13 @@ export interface Point {
   y: number;
 }
 
+export interface ConnectorAnchor {
+  shapeId: string;
+  // Position relative to the shape's bounding box, retained as the shape is resized.
+  u: number;
+  v: number;
+}
+
 // All saved positions and measurements use feet; grid spacing is a snapping preference.
 export interface DrawingItem {
   id: string;
@@ -29,6 +36,17 @@ export interface DrawingItem {
   heightLabel?: string;
   showDimension: boolean;
   points?: Point[];
+  bend?: Point; // Arrow bend relative to its start point.
+  diagramShape?: PolygonTool;
+  startAnchor?: ConnectorAnchor;
+  endAnchor?: ConnectorAnchor;
+  textSize?: number;
+  textColor?: string;
+  textFont?: "Arial" | "Georgia" | "monospace";
+  textBold?: boolean;
+  textItalic?: boolean;
+  textAlign?: "left" | "center" | "right";
+  fillColor?: string;
 }
 
 export interface DrawingFile {
@@ -200,7 +218,7 @@ function lineSegments(item: DrawingItem): Array<[Point, Point]> {
   if (item.kind === "wall" || item.kind === "dashed") {
     return [[{ x: item.x, y: item.y }, { x: item.x2, y: item.y2 }]];
   }
-  if (item.kind !== "rectangle") return [];
+  if (item.kind !== "rectangle" || item.diagramShape) return [];
   const corners = [{ x: item.x, y: item.y }, { x: item.x2, y: item.y }, { x: item.x2, y: item.y2 }, { x: item.x, y: item.y2 }];
   return corners.map((corner, index) => [corner, corners[(index + 1) % corners.length]]);
 }
@@ -341,10 +359,70 @@ export function itemBounds(item: DrawingItem) {
     const radius = itemLength(item);
     return { left: item.x - radius, top: item.y - radius, right: item.x + radius, bottom: item.y + radius };
   }
-  const points = item.kind === "freehand" && item.points?.length
+  const points = item.kind === "arrow" && item.bend
+    ? [{ x: item.x, y: item.y }, { x: item.x + item.bend.x, y: item.y + item.bend.y }, { x: item.x2, y: item.y2 }]
+    : item.kind === "freehand" && item.points?.length
     ? item.points.map((point) => ({ x: item.x + point.x, y: item.y + point.y }))
     : [{ x: item.x, y: item.y }, { x: item.x2, y: item.y2 }];
   return points.reduce((bounds, point) => ({ left: Math.min(bounds.left, point.x), top: Math.min(bounds.top, point.y), right: Math.max(bounds.right, point.x), bottom: Math.max(bounds.bottom, point.y) }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
+}
+
+// Snap connectors to a shape's perimeter, recording a relative location rather
+// than a fixed coordinate so the connection survives moving and resizing.
+export function findConnectorAnchor(point: Point, items: DrawingItem[], tolerance: number): { anchor: ConnectorAnchor; point: Point } | undefined {
+  let closest: { anchor: ConnectorAnchor; point: Point } | undefined;
+  let best = tolerance;
+  for (const shape of items) {
+    if (shape.kind !== "rectangle" && shape.kind !== "circle") continue;
+    const bounds = itemBounds(shape);
+    const width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
+    if (width <= 0 || height <= 0) continue;
+    let candidate: Point;
+    if (shape.kind === "circle") {
+      const dx = point.x - shape.x, dy = point.y - shape.y;
+      const length = Math.hypot(dx, dy) || 1;
+      const radius = itemLength(shape);
+      candidate = { x: shape.x + dx / length * radius, y: shape.y + dy / length * radius };
+    } else {
+      const vertices = shape.diagramShape
+        ? polygonVertices(shape.diagramShape, { x: shape.x, y: shape.y }, { x: shape.x2, y: shape.y2 })
+        : [{ x: bounds.left, y: bounds.top }, { x: bounds.right, y: bounds.top }, { x: bounds.right, y: bounds.bottom }, { x: bounds.left, y: bounds.bottom }];
+      if (!vertices.length) continue;
+      candidate = vertices.map((vertex, index) => closestPointOnSegment(point, vertex, vertices[(index + 1) % vertices.length])).reduce((a, b) => distance(point, a) <= distance(point, b) ? a : b);
+    }
+    const gap = distance(point, candidate);
+    if (gap <= best) {
+      best = gap;
+      closest = { point: candidate, anchor: { shapeId: shape.id, u: Math.max(0, Math.min(1, (candidate.x - bounds.left) / width)), v: Math.max(0, Math.min(1, (candidate.y - bounds.top) / height)) } };
+    }
+  }
+  return closest;
+}
+
+export function bindConnectorEndpoint(item: DrawingItem, endpoint: "start" | "end", point: Point, shapes: DrawingItem[], tolerance: number): DrawingItem {
+  const match = findConnectorAnchor(point, shapes, tolerance);
+  const moved = moveLineEndpoint(item, endpoint, match?.point ?? point);
+  return endpoint === "start" ? { ...moved, startAnchor: match?.anchor } : { ...moved, endAnchor: match?.anchor };
+}
+
+export function resolveConnectorAnchors(items: DrawingItem[]): DrawingItem[] {
+  const shapes = new Map(items.filter((item) => item.kind === "rectangle" || item.kind === "circle").map((item) => [item.id, item]));
+  return items.map((item) => {
+    if (item.kind !== "arrow") return item;
+    let result = item;
+    for (const endpoint of ["start", "end"] as const) {
+      const anchor = endpoint === "start" ? result.startAnchor : result.endAnchor;
+      if (!anchor) continue;
+      const shape = shapes.get(anchor.shapeId);
+      if (!shape) {
+        result = endpoint === "start" ? { ...result, startAnchor: undefined } : { ...result, endAnchor: undefined };
+        continue;
+      }
+      const bounds = itemBounds(shape);
+      result = moveLineEndpoint(result, endpoint, { x: bounds.left + (bounds.right - bounds.left) * anchor.u, y: bounds.top + (bounds.bottom - bounds.top) * anchor.v });
+    }
+    return result;
+  });
 }
 
 // A line remains one editable item. Connected endpoints and crossings divide
@@ -570,7 +648,7 @@ export function resizeLine(item: DrawingItem, lengthFeet: number): DrawingItem {
 
 export function moveLineEndpoint(item: DrawingItem, endpoint: "start" | "end", point: Point): DrawingItem {
   return endpoint === "start"
-    ? { ...item, x: point.x, y: point.y }
+    ? { ...item, x: point.x, y: point.y, ...(item.bend ? { bend: { x: item.bend.x + item.x - point.x, y: item.bend.y + item.y - point.y } } : {}) }
     : { ...item, x2: point.x, y2: point.y };
 }
 
@@ -643,6 +721,19 @@ export function isDrawingFile(value: unknown): value is DrawingFile {
       typeof item.color !== "string" ||
       !/^#[\da-f]{6}$/i.test(item.color) ||
       typeof item.showDimension !== "boolean" ||
+      [item.startAnchor, item.endAnchor].some((anchor) => anchor !== undefined && (
+        item.kind !== "arrow" || !anchor || typeof anchor.shapeId !== "string" || !anchor.shapeId || anchor.shapeId.length > 128 ||
+        ![anchor.u, anchor.v].every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1)
+      )) ||
+      (item.textSize !== undefined && (!Number.isFinite(item.textSize) || item.textSize < 8 || item.textSize > 72)) ||
+      (item.textColor !== undefined && !/^#[\da-f]{6}$/i.test(item.textColor)) ||
+      (item.fillColor !== undefined && !/^#[\da-f]{6}$/i.test(item.fillColor)) ||
+      (item.textFont !== undefined && !["Arial", "Georgia", "monospace"].includes(item.textFont)) ||
+      (item.textAlign !== undefined && !["left", "center", "right"].includes(item.textAlign)) ||
+      (item.textBold !== undefined && typeof item.textBold !== "boolean") ||
+      (item.textItalic !== undefined && typeof item.textItalic !== "boolean") ||
+      (item.diagramShape !== undefined && (item.kind !== "rectangle" || !["triangle", "diamond", "pentagon", "hexagon", "octagon", "star"].includes(item.diagramShape))) ||
+      (item.bend !== undefined && (!item.bend || ![item.bend.x, item.bend.y].every((n) => typeof n === "number" && Number.isFinite(n) && Math.abs(n) <= 2000000))) ||
       (item.noteWidth !== undefined && (typeof item.noteWidth !== "number" || !Number.isFinite(item.noteWidth) || item.noteWidth < NOTE_MIN_SIZE || item.noteWidth > NOTE_MAX_SIZE)) ||
       (item.noteHeight !== undefined && (typeof item.noteHeight !== "number" || !Number.isFinite(item.noteHeight) || item.noteHeight < NOTE_MIN_SIZE || item.noteHeight > NOTE_MAX_SIZE)) ||
       (item.layerName !== undefined && (typeof item.layerName !== "string" || item.layerName.length > 80)) ||

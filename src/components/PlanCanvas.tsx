@@ -29,6 +29,8 @@ import {
   newItem,
   snapPoint,
   MAX_FREEHAND_POINTS,
+  bindConnectorEndpoint,
+  findConnectorAnchor,
 } from "../model";
 import type { DrawingItem, DrawingTool, Point, ShapeTool, PolygonTool } from "../model";
 
@@ -51,12 +53,14 @@ interface PlanCanvasProps {
   gridSnap: boolean;
   objectSnap: boolean;
   showDimensions: boolean;
+  workflowMode: boolean;
+  textEditRequest: { id: string; text: string; sequence: number } | null;
   showOverallDimensions: boolean;
   spaceDown: boolean;
   camera: Camera;
   onCameraChange: (camera: Camera) => void;
   onCreate: (item: DrawingItem) => boolean;
-  onCreatePolygon: (kind: PolygonTool, start: Point, end: Point) => void;
+  onCreatePolygon: (kind: PolygonTool, start: Point, end: Point) => DrawingItem | undefined;
   onSelect: (id: string | null, additive?: boolean) => void;
   onBoxSelect: (ids: string[], additive: boolean) => void;
   onUpdate: (item: DrawingItem) => void;
@@ -193,7 +197,8 @@ function LineDrawing({ item, items = [], sections, showOverallDimensions = false
 
 function AnnotationArrow({ item, hitWidth = 0.38 }: { item: DrawingItem; hitWidth?: number }) {
   const dx = item.x2 - item.x, dy = item.y2 - item.y;
-  return <><Arrow points={[0, 0, dx, dy]} stroke={item.color} fill={item.color} strokeWidth={0.06} pointerLength={0.3} pointerWidth={0.22} listening={false} /><Line points={[0, 0, dx, dy]} stroke="transparent" strokeWidth={hitWidth} hitStrokeWidth={hitWidth} /></>;
+  const points = item.bend ? [0, 0, item.bend.x, item.bend.y, dx, dy] : [0, 0, dx, dy];
+  return <><Arrow points={points} stroke={item.color} fill={item.color} strokeWidth={0.06} pointerLength={0.3} pointerWidth={0.22} listening={false} /><Line points={points} stroke="transparent" strokeWidth={hitWidth} hitStrokeWidth={hitWidth} /></>;
 }
 
 function FreehandDrawing({ item, hitWidth = 0.38 }: { item: DrawingItem; hitWidth?: number }) {
@@ -205,19 +210,20 @@ function RectangleDrawing({ item }: { item: DrawingItem }) {
   const rect = normalizedRect(item);
   return (
     <>
-      <Rect
+      {item.diagramShape ? <Line points={polygonVertices(item.diagramShape, { x: 0, y: 0 }, { x: item.x2 - item.x, y: item.y2 - item.y }).flatMap((point) => [point.x, point.y])} closed fill={item.fillColor ?? "rgba(64, 124, 177, 0.04)"} stroke={item.color} strokeWidth={0.06} listening={false} /> : <Rect
         {...rect}
-        fill="rgba(64, 124, 177, 0.04)"
+        fill={item.fillColor ?? "rgba(64, 124, 177, 0.04)"}
         stroke={item.color}
         strokeWidth={0.06}
         listening={false}
-      />
+      />}
       <Rect
         {...rect}
         fill="transparent"
         stroke="transparent"
         strokeWidth={0.38}
       />
+      {item.label && <Text x={rect.x + 0.15} y={rect.y + 0.15} width={Math.max(0, rect.width - 0.3)} height={Math.max(0, rect.height - 0.3)} text={item.label} fontFamily={item.textFont ?? "Arial"} fontSize={(item.textSize ?? 14) / 40} fontStyle={`${item.textBold ? "bold " : ""}${item.textItalic ? "italic" : ""}`.trim() || "normal"} align={item.textAlign ?? "center"} verticalAlign="middle" fill={item.textColor ?? item.color} listening={false} />}
       {item.showDimension && rect.width > 0 && rect.height > 0 && (
         <>
           <Label
@@ -243,12 +249,13 @@ function CircleDrawing({ item }: { item: DrawingItem }) {
     <>
       <Circle
         radius={radius}
-        fill="rgba(64, 124, 177, 0.04)"
+        fill={item.fillColor ?? "rgba(64, 124, 177, 0.04)"}
         stroke={item.color}
         strokeWidth={0.06}
         listening={false}
       />
       <Circle radius={radius} fill="transparent" stroke="transparent" strokeWidth={0.38} />
+      {item.label && !item.showDimension && <Text x={-radius * 0.7} y={-radius * 0.7} width={radius * 1.4} height={radius * 1.4} text={item.label} fontFamily={item.textFont ?? "Arial"} fontSize={(item.textSize ?? 14) / 40} fontStyle={`${item.textBold ? "bold " : ""}${item.textItalic ? "italic" : ""}`.trim() || "normal"} align={item.textAlign ?? "center"} verticalAlign="middle" fill={item.textColor ?? item.color} listening={false} />}
       {item.showDimension && radius > 0 && (
         <Label
           x={0}
@@ -333,6 +340,7 @@ const DrawingShape = memo(function DrawingShape({
   gridSnap,
   objectSnap,
   showDimensions,
+  workflowMode,
   showOverallDimensions,
   labelPositions,
   sectionsByItem,
@@ -353,6 +361,7 @@ const DrawingShape = memo(function DrawingShape({
   gridSnap: boolean;
   objectSnap: boolean;
   showDimensions: boolean;
+  workflowMode: boolean;
   showOverallDimensions: boolean;
   labelPositions?: Point[];
   sectionsByItem: Map<string, Array<{ start: number; end: number; length: number }>>;
@@ -365,7 +374,7 @@ const DrawingShape = memo(function DrawingShape({
   multiSelect: boolean;
   onUpdate: (item: DrawingItem) => void;
 }) {
-  const visualItem = { ...item, color: displayColor(item.color, theme) };
+  const visualItem = { ...item, color: displayColor(item.color, theme), textColor: item.textColor ?? (item.fillColor ? item.color : undefined) };
   // Use a larger invisible hit area for touch without changing drawn geometry.
   const hitWidth = window.matchMedia("(any-pointer: coarse)").matches ? Math.max(0.38, 44 / (PIXELS_PER_FOOT * camera.zoom)) : 0.38;
   const noteBox = item.kind === "note" ? noteSize(item) : null;
@@ -436,6 +445,8 @@ const DrawingShape = memo(function DrawingShape({
         }
       }}
       onDragStart={() => { notePressRef.current = null; }}
+      onDblClick={() => { if (workflowMode && (item.kind === "rectangle" || item.kind === "circle")) editNote(item); }}
+      onDblTap={() => { if (workflowMode && (item.kind === "rectangle" || item.kind === "circle")) editNote(item); }}
       onDragMove={snapDrag}
       onDragEnd={finishDrag}
     >
@@ -458,7 +469,7 @@ const DrawingShape = memo(function DrawingShape({
         </>
       )}
       {selected && (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" || item.kind === "arrow" || item.kind === "freehand") && (
-        <Line points={item.kind === "freehand" ? (item.points ?? []).flatMap((point) => [point.x, point.y]) : [0, 0, item.x2 - item.x, item.y2 - item.y]} stroke="#3b91ce" strokeWidth={0.14} opacity={0.55} lineCap="round" lineJoin="round" listening={false} />
+        <Line points={item.kind === "freehand" ? (item.points ?? []).flatMap((point) => [point.x, point.y]) : item.kind === "arrow" && item.bend ? [0, 0, item.bend.x, item.bend.y, item.x2 - item.x, item.y2 - item.y] : [0, 0, item.x2 - item.x, item.y2 - item.y]} stroke="#3b91ce" strokeWidth={0.14} opacity={0.55} lineCap="round" lineJoin="round" listening={false} />
       )}
       {selected && item.kind !== "wall" && item.kind !== "dashed" && item.kind !== "dimension" && item.kind !== "arrow" && item.kind !== "freehand" && (
         item.kind === "circle" ? (
@@ -572,6 +583,8 @@ export default function PlanCanvas({
   gridSnap,
   objectSnap,
   showDimensions,
+  workflowMode,
+  textEditRequest,
   showOverallDimensions,
   spaceDown,
   camera,
@@ -608,6 +621,7 @@ export default function PlanCanvas({
   const pixelsPerFoot = PIXELS_PER_FOOT * camera.zoom;
   const selectedLine = selectedIds.length === 1 ? items.find((item) => item.id === selectedIds[0] && (item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension" || item.kind === "arrow")) : undefined;
   const displayedItems = useMemo(() => (endpointPreview ?? items).map((item) => noteResizePreview?.id === item.id ? { ...item, noteWidth: noteResizePreview.width, noteHeight: noteResizePreview.height } : item), [endpointPreview, items, noteResizePreview]);
+  const selectedWorkflowShape = workflowMode && selectedIds.length === 1 ? displayedItems.find((item) => item.id === selectedIds[0] && (item.kind === "rectangle" || item.kind === "circle")) : undefined;
   const selectedNote = selectedIds.length === 1 ? displayedItems.find((item) => item.id === selectedIds[0] && item.kind === "note") : undefined;
   const sectionsByItem = useMemo(() => lineSectionsByItem(displayedItems), [displayedItems]);
   const lineLabelPositions = useMemo(() => layoutLineLabels(displayedItems, showOverallDimensions, sectionsByItem), [displayedItems, sectionsByItem, showOverallDimensions]);
@@ -620,6 +634,13 @@ export default function PlanCanvas({
   useEffect(() => {
     if (editingNote) noteInputRef.current?.focus();
   }, [editingNote?.id]);
+
+  useEffect(() => {
+    if (!textEditRequest) return;
+    setNoteInputHeight(0);
+    cancelNoteRef.current = false;
+    setEditingNote({ id: textEditRequest.id, text: textEditRequest.text });
+  }, [textEditRequest]);
 
   useLayoutEffect(() => {
     const input = noteInputRef.current;
@@ -639,6 +660,7 @@ export default function PlanCanvas({
     const item = items.find((entry) => entry.id === editingNote.id);
     if (!cancelNoteRef.current && item && (item.label ?? "") !== editingNote.text) {
       // Grow a note after editing so newly entered lines are not silently hidden.
+      if (item.kind !== "note") { onUpdate({ ...item, label: editingNote.text }); cancelNoteRef.current = false; setEditingNote(null); return; }
       const size = noteSize(item);
       const requiredHeight = NOTE_PADDING * 2 + wrapNoteText(editingNote.text || "Note", size.width).length * NOTE_LINE_HEIGHT;
       onUpdate({ ...item, label: editingNote.text, noteHeight: Math.min(NOTE_MAX_SIZE, Math.max(size.height, requiredHeight)) });
@@ -675,9 +697,10 @@ export default function PlanCanvas({
     // An annotation arrow can point to a joint without moving the connected linework.
     if (selectedLine?.kind === "arrow") {
       const endpoint = distance(joint.point, { x: selectedLine.x, y: selectedLine.y }) <= 1e-6 ? "start" : "end";
-      const point = snapPoint(position, items.filter((item) => item.id !== selectedLine.id), { grid: gridSnap, objects: objectSnap, gridFeet, toleranceFeet: 10 / pixelsPerFoot }).point;
+      const match = workflowMode ? findConnectorAnchor(position, items, 14 / pixelsPerFoot) : undefined;
+      const point = match?.point ?? snapPoint(position, items.filter((item) => item.id !== selectedLine.id), { grid: gridSnap, objects: objectSnap, gridFeet, toleranceFeet: 10 / pixelsPerFoot }).point;
       event.target.position(point);
-      return items.map((item) => item.id === selectedLine.id ? moveLineEndpoint(item, endpoint, point) : item);
+      return items.map((item) => item.id === selectedLine.id ? workflowMode ? bindConnectorEndpoint(item, endpoint, point, items, 14 / pixelsPerFoot) : moveLineEndpoint(item, endpoint, point) : item);
     }
     const stationary = joint.prepared.filter((item) => !((item.kind === "wall" || item.kind === "dashed" || item.kind === "dimension") && (distance({ x: item.x, y: item.y }, joint.point) <= 1e-6 || distance({ x: item.x2, y: item.y2 }, joint.point) <= 1e-6)));
     const point = snapPoint(position, stationary, { grid: gridSnap, objects: objectSnap, gridFeet, toleranceFeet: 10 / pixelsPerFoot }).point;
@@ -822,7 +845,7 @@ export default function PlanCanvas({
       return;
     }
     if (activeTool !== "select") {
-      const start = activeTool === "freehand" ? point : snap(point).point;
+      const start = activeTool === "freehand" ? point : workflowMode && activeTool === "arrow" ? (findConnectorAnchor(point, items, 14 / pixelsPerFoot)?.point ?? snap(point).point) : snap(point).point;
       const nextGesture = { kind: activeTool, start, current: start, pointerId: event.pointerId, points: activeTool === "freehand" ? [{ x: 0, y: 0 }] : undefined };
       gestureRef.current = nextGesture;
       setGesture(nextGesture);
@@ -929,15 +952,16 @@ export default function PlanCanvas({
     const releasePoint = pointerPosition(event);
     const end = currentGesture.kind === "freehand"
       ? releasePoint ?? currentGesture.current
-      : releasePoint ? snap(releasePoint).point : currentGesture.current;
+      : releasePoint ? (workflowMode && currentGesture.kind === "arrow" ? findConnectorAnchor(releasePoint, items, 14 / pixelsPerFoot)?.point : undefined) ?? snap(releasePoint).point : currentGesture.current;
     if (currentGesture.points) appendFreehandPoint(currentGesture, end);
     if (!cancelled && (currentGesture.kind === "freehand" ? (currentGesture.points?.length ?? 0) >= 2 : distance(currentGesture.start, end) > 0.04)) {
       if (isPolygonTool(currentGesture.kind)) {
-        onCreatePolygon(currentGesture.kind, currentGesture.start, end);
+        const created = onCreatePolygon(currentGesture.kind, currentGesture.start, end);
+        if (workflowMode && created) beginNoteEdit(created);
       } else {
         const item = newItem(currentGesture.kind, currentGesture.start, end);
         if (currentGesture.points) item.points = currentGesture.points;
-        onCreate(item);
+        if (onCreate(item) && workflowMode && (item.kind === "rectangle" || item.kind === "circle")) beginNoteEdit(item);
       }
     }
     gestureRef.current = null;
@@ -1005,6 +1029,7 @@ export default function PlanCanvas({
               gridSnap={gridSnap}
               objectSnap={objectSnap}
               showDimensions={showDimensions}
+              workflowMode={workflowMode}
               showOverallDimensions={showOverallDimensions}
               labelPositions={lineLabelPositions.get(item.id)}
               sectionsByItem={sectionsByItem}
@@ -1024,11 +1049,11 @@ export default function PlanCanvas({
               {preview.kind === "freehand" ? (
                 <FreehandDrawing item={preview} />
               ) : preview.kind === "wall" || preview.kind === "dashed" ? (
-                <LineDrawing item={preview} />
+                <LineDrawing item={{ ...preview, showDimension: showDimensions && preview.showDimension }} />
               ) : preview.kind === "rectangle" ? (
-                <RectangleDrawing item={preview} />
+                <RectangleDrawing item={{ ...preview, showDimension: showDimensions && preview.showDimension }} />
               ) : preview.kind === "circle" ? (
-                <CircleDrawing item={preview} />
+                <CircleDrawing item={{ ...preview, showDimension: showDimensions && preview.showDimension }} />
               ) : preview.kind === "arrow" ? (
                 <AnnotationArrow item={preview} />
               ) : (
@@ -1046,6 +1071,24 @@ export default function PlanCanvas({
               onTouchStart={(event) => { event.cancelBubble = true; }}
               onDragMove={(event) => { event.cancelBubble = true; const width = clamp(event.target.x() - selectedNote.x); const height = noteSize({ ...selectedNote, noteWidth: width, noteHeight: clamp(event.target.y() - selectedNote.y) }).height; event.target.position({ x: selectedNote.x + width, y: selectedNote.y + height }); setNoteResizePreview({ id: selectedNote.id, width, height }); }}
               onDragEnd={(event) => { event.cancelBubble = true; const width = clamp(event.target.x() - selectedNote.x); const height = noteSize({ ...selectedNote, noteWidth: width, noteHeight: clamp(event.target.y() - selectedNote.y) }).height; if (!event.evt.type.includes("cancel")) onUpdate({ ...selectedNote, noteWidth: width, noteHeight: height }); setNoteResizePreview(null); }} />;
+          })()}
+          {activeTool === "select" && !multiSelect && !editingNote && selectedWorkflowShape && (() => {
+            const shape = selectedWorkflowShape;
+            const radius = itemLength(shape);
+            const corner = shape.kind === "circle" ? { x: shape.x + radius, y: shape.y } : { x: shape.x2, y: shape.y2 };
+            return <Rect x={corner.x} y={corner.y} width={12 / pixelsPerFoot} height={12 / pixelsPerFoot} offsetX={6 / pixelsPerFoot} offsetY={6 / pixelsPerFoot} fill="white" stroke="#168c9a" strokeWidth={2 / pixelsPerFoot} hitStrokeWidth={44 / pixelsPerFoot} draggable
+              onPointerDown={(event) => { event.cancelBubble = true; }}
+              onMouseDown={(event) => { event.cancelBubble = true; }}
+              onTouchStart={(event) => { event.cancelBubble = true; }}
+              onDragMove={(event) => { event.cancelBubble = true; const point = snap({ x: event.target.x(), y: event.target.y() }, shape.id).point; const updated = shape.kind === "circle" ? { ...shape, x2: shape.x + distance({ x: shape.x, y: shape.y }, point), y2: shape.y } : { ...shape, x2: point.x, y2: point.y }; setEndpointPreview(items.map((item) => item.id === shape.id ? updated : item)); }}
+              onDragEnd={(event) => { event.cancelBubble = true; const point = snap({ x: event.target.x(), y: event.target.y() }, shape.id).point; const updated = shape.kind === "circle" ? { ...shape, x2: shape.x + distance({ x: shape.x, y: shape.y }, point), y2: shape.y } : { ...shape, x2: point.x, y2: point.y }; if (!event.evt.type.includes("cancel") && (shape.kind === "circle" ? itemLength(updated) > 0.05 : Math.abs(updated.x2 - updated.x) > 0.05 && Math.abs(updated.y2 - updated.y) > 0.05)) onUpdate(updated); setEndpointPreview(null); }} />;
+          })()}
+          {workflowMode && activeTool === "select" && !multiSelect && selectedLine?.kind === "arrow" && (() => {
+            const bend = selectedLine.bend ?? { x: (selectedLine.x2 - selectedLine.x) / 2, y: (selectedLine.y2 - selectedLine.y) / 2 };
+            return <Rect x={selectedLine.x + bend.x} y={selectedLine.y + bend.y} width={12 / pixelsPerFoot} height={12 / pixelsPerFoot} offsetX={6 / pixelsPerFoot} offsetY={6 / pixelsPerFoot} fill="#fff" stroke="#168c9a" strokeWidth={2 / pixelsPerFoot} hitStrokeWidth={44 / pixelsPerFoot} draggable
+              onPointerDown={(event) => { event.cancelBubble = true; }}
+              onDragMove={(event) => { event.cancelBubble = true; setEndpointPreview(items.map((item) => item.id === selectedLine.id ? { ...item, bend: { x: event.target.x() - item.x, y: event.target.y() - item.y } } : item)); }}
+              onDragEnd={(event) => { event.cancelBubble = true; if (!event.evt.type.includes("cancel")) onUpdate({ ...selectedLine, bend: { x: event.target.x() - selectedLine.x, y: event.target.y() - selectedLine.y } }); setEndpointPreview(null); }} />;
           })()}
           {activeTool === "select" && !multiSelect && selectedLine && (["start", "end"] as const).map((endpoint) => {
             const shown = displayedItems.find((item) => item.id === selectedLine.id) ?? selectedLine;
@@ -1074,18 +1117,19 @@ export default function PlanCanvas({
       {editingNote && (() => {
         const note = items.find((item) => item.id === editingNote.id);
         if (!note) return null;
-        const box = noteSize({ ...note, label: editingNote.text });
+        const bounds = note.kind === "rectangle" ? { x: Math.min(note.x, note.x2), y: Math.min(note.y, note.y2), width: Math.abs(note.x2 - note.x), height: Math.abs(note.y2 - note.y) } : note.kind === "circle" ? { x: note.x - itemLength(note), y: note.y - itemLength(note), width: itemLength(note) * 2, height: itemLength(note) * 2 } : { x: note.x, y: note.y, ...noteSize({ ...note, label: editingNote.text }) };
+        const box = bounds;
         const width = Math.min(size.width, Math.max(120, box.width * pixelsPerFoot));
         const minFontSize = window.matchMedia("(any-pointer: coarse)").matches ? 16 : 12;
-        const fontSize = Math.max(minFontSize, Math.min(32, NOTE_FONT_SIZE * pixelsPerFoot));
+        const fontSize = Math.max(minFontSize, Math.min(72, (note.kind === "note" ? NOTE_FONT_SIZE : (note.textSize ?? 14) / 40) * pixelsPerFoot));
         const editWidth = Math.max(NOTE_MIN_SIZE, ((width - 8) / (fontSize * 0.6)) * NOTE_CHARACTER_WIDTH + NOTE_PADDING * 2);
         const editLines = wrapNoteText(editingNote.text || "Note", editWidth).length;
         const height = Math.max(64, box.height * pixelsPerFoot, editLines * fontSize * 1.2 + 8, noteInputHeight);
-        const left = Math.max(0, Math.min(size.width - width, camera.x + note.x * pixelsPerFoot));
+        const left = Math.max(0, Math.min(size.width - width, camera.x + bounds.x * pixelsPerFoot));
         // Keep the end of a very tall note in view without giving it an internal scrollbar.
-        const top = Math.min(Math.max(0, camera.y + note.y * pixelsPerFoot), size.height - height - 44);
+        const top = Math.min(Math.max(0, camera.y + bounds.y * pixelsPerFoot), size.height - height - 44);
         return <div className="canvas-note-editor" style={{ left, top, width }} onPointerDown={(event) => event.stopPropagation()}>
-          <textarea ref={noteInputRef} className="canvas-note-input" aria-label="Note text" placeholder="Type a note…" maxLength={1000} value={editingNote.text} style={{ height, fontSize }} onChange={(event) => setEditingNote({ ...editingNote, text: event.target.value })} onBlur={finishNoteEdit} onKeyDown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.blur(); } else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelNoteRef.current = true; event.currentTarget.blur(); } }} />
+          <textarea ref={noteInputRef} className="canvas-note-input" aria-label="Note text" placeholder="Type a note…" maxLength={1000} value={editingNote.text} style={{ height, fontSize, fontFamily: note.kind === "note" ? undefined : note.textFont ?? "Arial", fontWeight: note.textBold ? "bold" : "normal", fontStyle: note.textItalic ? "italic" : "normal", textAlign: note.kind === "note" ? "left" : note.textAlign ?? "center", color: note.textColor }} onChange={(event) => setEditingNote({ ...editingNote, text: event.target.value })} onBlur={finishNoteEdit} onKeyDown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.blur(); } else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelNoteRef.current = true; event.currentTarget.blur(); } }} />
           <div className="canvas-note-actions"><button type="button" onClick={finishNoteEdit}>Done</button></div>
         </div>;
       })()}
@@ -1093,14 +1137,14 @@ export default function PlanCanvas({
         <div className="canvas-empty">
           <div className="empty-grid-icon" aria-hidden="true"><span>⌗</span></div>
           <span className="empty-eyebrow">YOUR DRAWING WORKSPACE</span>
-          <strong>Start your plan.</strong>
+          <strong>{workflowMode ? "Start your workflow." : "Start your plan."}</strong>
           <span>Choose a tool whenever you’re ready.<br />Each grid square represents {formatFeetInches(gridFeet)}.</span>
           <button className="button button-outline" onClick={() => setShowWelcome(false)}>
             Open canvas
           </button>
         </div>
       )}
-      {gesture && (
+      {gesture && !workflowMode && (
         <div className="drawing-hint" aria-live="polite">
           {formatFeetInches(distance(gesture.start, gesture.current))}
         </div>

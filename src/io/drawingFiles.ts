@@ -1,4 +1,4 @@
-import { formatFeetInches, itemBounds, lineSections, lineSectionsByItem, hasFullDimension, layoutLineLabels, noteSize, visibleNoteLines, NOTE_FONT_SIZE, NOTE_PADDING, NOTE_LINE_HEIGHT } from "../model";
+import { formatFeetInches, itemBounds, lineSections, lineSectionsByItem, hasFullDimension, layoutLineLabels, noteSize, visibleNoteLines, NOTE_FONT_SIZE, NOTE_PADDING, NOTE_LINE_HEIGHT, polygonVertices } from "../model";
 import type { DrawingFile, DrawingItem, Point } from "../model";
 
 const EXPORT_SCALE = 72;
@@ -14,6 +14,34 @@ function xml(value: string) {
     };
     return entities[character];
   });
+}
+
+function shapeText(item: DrawingItem, left: number, top: number, width: number, height: number): string {
+  if (!item.label || width <= 0 || height <= 0) return "";
+  const size = (item.textSize ?? 14) * EXPORT_SCALE / 40;
+  const padding = 0.15 * EXPORT_SCALE;
+  const availableWidth = Math.max(size, width - padding * 2);
+  const capacity = Math.max(1, Math.floor(availableWidth / (size * 0.56)));
+  const lines = item.label.split(/\r\n|\r|\n/).flatMap((paragraph) => {
+    const result: string[] = [];
+    let remaining = paragraph;
+    while (remaining.length > capacity) {
+      const space = remaining.lastIndexOf(" ", capacity);
+      const cut = space > 0 ? space : capacity;
+      result.push(remaining.slice(0, cut).trimEnd());
+      remaining = remaining.slice(cut).trimStart();
+    }
+    result.push(remaining);
+    return result;
+  });
+  const lineHeight = size * 1.2;
+  const visible = lines.slice(0, Math.max(1, Math.floor((height - padding * 2) / lineHeight)));
+  const alignment = item.textAlign ?? "center";
+  const anchor = alignment === "left" ? "start" : alignment === "right" ? "end" : "middle";
+  const x = alignment === "left" ? left + padding : alignment === "right" ? left + width - padding : left + width / 2;
+  const firstY = top + height / 2 - (visible.length - 1) * lineHeight / 2;
+  const linesSvg = visible.map((line, index) => `<tspan x="${x}" y="${firstY + index * lineHeight}">${xml(line)}</tspan>`).join("");
+  return `<text text-anchor="${anchor}" dominant-baseline="middle" fill="${xml(item.textColor ?? item.color)}" font-family="${xml(item.textFont ?? "Arial")}" font-size="${size}" font-weight="${item.textBold ? "bold" : "normal"}" font-style="${item.textItalic ? "italic" : "normal"}">${linesSvg}</text>`;
 }
 
 function dimensionLabel(text: string, x: number, y: number) {
@@ -37,11 +65,15 @@ function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDim
   const color = xml(item.color);
 
   if (item.kind === "arrow") {
-    const head = Math.min(0.3 * scale, length * 0.7);
+    const bendX = item.bend ? x + item.bend.x * scale : x;
+    const bendY = item.bend ? y + item.bend.y * scale : y;
+    const endDx = x2 - bendX, endDy = y2 - bendY;
+    const endLength = Math.hypot(endDx, endDy) || 1;
+    const head = Math.min(0.3 * scale, endLength * 0.7);
     const wing = head * 0.4;
-    const ux = dx / length, uy = dy / length;
+    const ux = endDx / endLength, uy = endDy / endLength;
     const bx = x2 - ux * head, by = y2 - uy * head;
-    return `<line x1="${x}" y1="${y}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="2.5" stroke-linecap="round"/><path d="M ${x2} ${y2} L ${bx - uy * wing} ${by + ux * wing} L ${bx + uy * wing} ${by - ux * wing} Z" fill="${color}"/>`;
+    return `<polyline points="${x},${y} ${bendX},${bendY} ${x2},${y2}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M ${x2} ${y2} L ${bx - uy * wing} ${by + ux * wing} L ${bx + uy * wing} ${by - ux * wing} Z" fill="${color}"/>`;
   }
 
   if (item.kind === "freehand") {
@@ -74,8 +106,9 @@ function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDim
     const top = Math.min(y, y2);
     const width = Math.abs(dx);
     const height = Math.abs(dy);
-    const shape = `<rect x="${left}" y="${top}" width="${width}" height="${height}" fill="rgba(64,124,177,.04)" stroke="${color}" stroke-width="2.5"/>`;
-    if (!item.showDimension) return shape;
+    const shape = item.diagramShape ? `<polygon points="${polygonVertices(item.diagramShape, { x, y }, { x: x2, y: y2 }).map((point) => `${point.x},${point.y}`).join(" ")}" fill="${item.fillColor ?? "rgba(64,124,177,.04)"}" stroke="${color}" stroke-width="2.5"/>` : `<rect x="${left}" y="${top}" width="${width}" height="${height}" fill="${item.fillColor ?? "rgba(64,124,177,.04)"}" stroke="${color}" stroke-width="2.5"/>`;
+    const text = shapeText(item, left, top, width, height);
+    if (!item.showDimension) return shape + text;
     const widthLabel = item.widthLabel?.trim() || formatFeetInches(width / scale);
     const heightLabel = item.heightLabel?.trim() || formatFeetInches(height / scale);
     return `${shape}${dimensionLabel(widthLabel, left + width / 2, top - 20)}${dimensionLabel(heightLabel, left + width + 22, top + height / 2)}`;
@@ -83,8 +116,9 @@ function renderItem(item: DrawingItem, items: DrawingItem[] = [], showOverallDim
 
   if (item.kind === "circle") {
     const radius = Math.hypot(dx, dy);
-    const shape = `<circle cx="${x}" cy="${y}" r="${radius}" fill="rgba(64,124,177,.04)" stroke="${color}" stroke-width="2.5"/>`;
-    if (!item.showDimension) return shape;
+    const shape = `<circle cx="${x}" cy="${y}" r="${radius}" fill="${item.fillColor ?? "rgba(64,124,177,.04)"}" stroke="${color}" stroke-width="2.5"/>`;
+    const text = !item.showDimension ? shapeText(item, x - radius * 0.7, y - radius * 0.7, radius * 1.4, radius * 1.4) : "";
+    if (!item.showDimension) return shape + text;
     const label = item.label?.trim() || `Ø ${formatFeetInches((radius * 2) / scale)}`;
     return `${shape}${dimensionLabel(label, x, y - radius - 20)}`;
   }

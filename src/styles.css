@@ -536,3 +536,23 @@ button:focus-visible, input:focus-visible { outline-color: #65cbd2; }
   .canvas-toolbar { justify-content: flex-start; }
 }
 @media (max-width: 1200px) { .workspace:has(.layers-panel) .canvas-toolbar { justify-content: flex-start; } }
+
+/* Drawing mode switches the tools without replacing the current drawing. */
+.drawing-mode { display: inline-flex; flex-shrink: 0; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: #edf3f3; }
+.drawing-mode button { border: 0; border-radius: 6px; padding: 7px 11px; background: transparent; color: #52666c; font: inherit; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.drawing-mode button.active { background: #fff; color: #173d43; box-shadow: 0 1px 4px #183e4424; }
+.drawing-mode button:focus-visible { outline: 2px solid #178c99; outline-offset: 1px; }
+[data-theme="dark"] .drawing-mode { background: #1a3037; border-color: #35505a; }
+[data-theme="dark"] .drawing-mode button { color: #b5cbd0; }
+[data-theme="dark"] .drawing-mode button.active { background: #36535d; color: #fff; }
+
+.workflow-text-controls { display: grid; gap: 12px; }
+.workflow-field { display: grid; gap: 6px; color: var(--muted, #63757d); font-size: 12px; }
+.workflow-field textarea, .workflow-field select, .workflow-field input { width: 100%; min-width: 0; border: 1px solid #d5e1e3; border-radius: 6px; padding: 7px 8px; color: #223d46; background: #fff; font: inherit; }
+.workflow-field textarea { resize: vertical; min-height: 70px; line-height: 1.4; }
+.workflow-format-row { display: grid; grid-template-columns: 70px 1fr; gap: 12px; align-items: end; }
+.workflow-format-buttons { display: flex; gap: 4px; }
+.workflow-format-buttons button { min-width: 34px; min-height: 32px; border: 1px solid #d5e1e3; border-radius: 6px; color: #36515a; background: #fff; cursor: pointer; }
+.workflow-format-buttons button[aria-pressed="true"] { border-color: #1c919e; color: #086c77; background: #d8f1f1; }
+[data-theme="dark"] .workflow-field textarea, [data-theme="dark"] .workflow-field select, [data-theme="dark"] .workflow-field input, [data-theme="dark"] .workflow-format-buttons button { background: #1b333b; color: #e1eff0; border-color: #38545e; }
+[data-theme="dark"] .workflow-format-buttons button[aria-pressed="true"] { background: #24616a; color: #fff; }
