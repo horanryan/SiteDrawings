@@ -31,7 +31,9 @@ The GitHub Actions workflow tests and builds the app, then deploys it to GitHub 
 
 ## Workflow drawings
 
-Use the **Site sketch / Workflow** switch above the canvas to move between separate browser-local workspaces. Draw a shape and type its label, double-click an existing shape to edit its text, or select it and start typing to replace the label. The Properties panel controls its font, size, alignment, color, and fill. Drag the square handle to resize it. Draw connectors between shape edges or highlighted connection points to attach them; endpoints follow the shapes as they move or resize. New connectors have rounded right-angle turns; choose a straight or curved style in Properties. Drag the square handle of a curved connector to adjust it, or drag an endpoint away to detach it. Each workspace saves independently and has its own drawing data and export options.
+Use the **Site sketch / Workflow** switch above the canvas to move between separate browser-local workspaces. On narrow screens, scroll the canvas actions horizontally to reach additional controls. Open **Flowchart** to choose a Process, Decision, Start / end, Input / output, Subprocess, or Circle. Start / end is an ellipse drawn within the bounds you drag; Circle is drawn from its center to its radius. New process layers are named Process, while existing layer names are preserved.
+
+Draw a shape and type its label, double-click an existing shape to edit its text, or select it and start typing to replace the label. Tap Done, click away, or press Ctrl+Enter (Command+Enter on a Mac) to save; press Escape to cancel. The Properties panel controls its font, size, alignment, color, and fill. Drag the square handle to resize it. Draw connectors between shape edges or highlighted connection points to attach them; endpoints follow the shapes as they move or resize. New connectors have rounded right-angle turns; choose a straight or curved style in Properties. Drag the square handle of a curved connector to adjust it, or drag an endpoint away to detach it. Each workspace saves independently and has its own drawing data and export options.
 
 ## Saving and sharing
 

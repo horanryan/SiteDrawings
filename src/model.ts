@@ -236,17 +236,17 @@ export function diagramShapeLabel(item: DrawingItem): string {
   return layerLabels[item.kind];
 }
 
-// Older plans have no layer names. Assign readable names without changing IDs.
-export function assignLayerNames(items: DrawingItem[]): DrawingItem[] {
+// Name unnamed layers by their displayed type, preserving existing names and IDs.
+export function assignLayerNames(items: DrawingItem[], workflow = false): DrawingItem[] {
   const used = new Set(items.map((item) => item.layerName?.trim()).filter(Boolean));
-  const counts = new Map<ItemKind, number>();
+  const counts = new Map<string, number>();
   return items.map((item) => {
     if (item.layerName?.trim()) return item;
-    const label = item.diagramShape ? diagramShapeLabel(item) : layerLabels[item.kind];
-    let number = counts.get(item.kind) ?? 0;
+    const label = workflow && item.kind === "rectangle" ? diagramShapeLabel(item) : item.diagramShape ? diagramShapeLabel(item) : layerLabels[item.kind];
+    let number = counts.get(label) ?? 0;
     let name: string;
     do { name = `${label} ${++number}`; } while (used.has(name));
-    counts.set(item.kind, number);
+    counts.set(label, number);
     used.add(name);
     return { ...item, layerName: name };
   });

@@ -175,7 +175,6 @@ kbd { display: inline-block; padding: 1px 4px; color: #64778a; border: 1px solid
 @media (max-width: 850px) {
   .brand { flex-basis: 150px; }
   .top-actions { gap: 4px; }
-  .breadcrumb { display: none; }
   .canvas-toolbar { justify-content: flex-start; padding: 0 8px; }
   .inspector { width: 225px; flex-basis: 225px; }
   .job-context { display: none; }
@@ -418,8 +417,6 @@ button:focus-visible, input:focus-visible { outline-color: #65cbd2; }
 @media (max-width: 1050px) { .layers-panel { flex-basis: 180px; } }
 @media (max-width: 850px) { .layers-panel { position: absolute; top: calc(76px + env(safe-area-inset-top)); bottom: 0; left: 68px; width: 210px; box-shadow: 12px 0 35px rgb(0 0 0 / 12%); } }
 @media (max-width: 760px) { .layers-panel { top: calc(64px + env(safe-area-inset-top)); left: 60px; } .layers-actions button, .layers-close { min-width: 40px; min-height: 40px; } }
-.workspace:has(.layers-panel) .breadcrumb { display: none; }
-.workspace:has(.layers-panel) .canvas-toolbar { justify-content: flex-end; }
 .canvas-toolbar { scrollbar-width: thin; }
 [data-theme="dark"] .layers-actions button, [data-theme="dark"] .layers-close { color: #aec3c7; }
 [data-theme="dark"] .layers-actions button:disabled { color: #71898f; }
@@ -512,9 +509,13 @@ button:focus-visible, input:focus-visible { outline-color: #65cbd2; }
   .layer-row, .shape-option { min-height: 44px; }
 }
 .canvas-note-editor { position: absolute; z-index: 3; }
-.canvas-note-editor .canvas-note-input { position: static; display: block; width: 100%; }
+.canvas-note-editor .canvas-note-input { position: static; display: block; box-sizing: border-box; width: 100%; padding-right: 10px; padding-left: 10px; border: 1px solid #6baeb4; border-radius: 5px; box-shadow: none; }
+.canvas-note-editor .canvas-note-input:focus { outline: 2px solid rgb(22 151 165 / 20%); outline-offset: 1px; }
+.canvas-note-input::placeholder { color: #89999d; opacity: 1; }
 .canvas-note-actions { display: flex; justify-content: flex-end; }
-.canvas-note-actions button { min-width: 64px; min-height: 40px; margin-top: 3px; padding: 0 12px; border: 0; border-radius: 8px; color: #0b3439; background: #4dd5e3; font-size: 13px; font-weight: 650; cursor: pointer; }
+.canvas-note-actions button { min-width: 58px; min-height: 32px; margin-top: 6px; padding: 0 12px; border: 1px solid #cbdcde; border-radius: 6px; color: #31565c; background: #fff; box-shadow: 0 2px 6px rgb(18 46 54 / 10%); font-size: 12px; font-weight: 600; cursor: pointer; }
+.canvas-note-actions button:hover { border-color: #82b9bd; background: #f2fafa; }
+[data-theme="dark"] .canvas-note-actions button { color: #d8eeee; background: #193039; border-color: #41616a; }
 @media (pointer: coarse) { .canvas-note-actions button { min-height: 44px; } }
 @media (min-width: 601px) and (max-width: 850px) {
   .top-actions .button { width: 40px; min-width: 40px; padding: 0; font-size: 0; }
@@ -532,13 +533,16 @@ button:focus-visible, input:focus-visible { outline-color: #65cbd2; }
 .tool-rail::-webkit-scrollbar { width: 4px; }
 .tool-rail::-webkit-scrollbar-thumb { border-radius: 4px; background: #496a72; }
 @media (max-width: 1200px) {
-  .job-context, .breadcrumb { display: none; }
+  .job-context { display: none; }
   .canvas-toolbar { justify-content: flex-start; }
 }
 @media (max-width: 1200px) { .workspace:has(.layers-panel) .canvas-toolbar { justify-content: flex-start; } }
 
-/* Drawing mode switches the tools without replacing the current drawing. */
+/* Keep the mode switch visible while canvas actions scroll on narrow screens. */
 .drawing-mode { display: inline-flex; flex-shrink: 0; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: #edf3f3; }
+.canvas-toolbar { gap: 8px; overflow: hidden; }
+.breadcrumb { flex: 0 0 auto; }
+.canvas-actions { min-width: 0; flex: 0 1 auto; overflow-x: auto; scrollbar-width: thin; }
 .drawing-mode button { border: 0; border-radius: 6px; padding: 7px 11px; background: transparent; color: #52666c; font: inherit; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }
 .drawing-mode button.active { background: #fff; color: #173d43; box-shadow: 0 1px 4px #183e4424; }
 .drawing-mode button:focus-visible { outline: 2px solid #178c99; outline-offset: 1px; }

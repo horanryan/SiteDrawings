@@ -505,7 +505,7 @@ function App() {
 
   function commitItems(next: DrawingItem[]) {
     if (drawingMode === "workflow") next = resolveConnectorAnchors(next);
-    next = assignLayerNames(next);
+    next = assignLayerNames(next, drawingMode === "workflow");
     const previous = itemsRef.current;
     if (JSON.stringify(previous) === JSON.stringify(next)) return false;
     if (drawingMode === "site" && hasNewLineOverlap(previous, next)) {
@@ -799,10 +799,10 @@ function App() {
           <div className="tool-group">
             {tools.filter((tool) => drawingMode === "site" || ["select", "arrow", "note", "freehand"].includes(tool.id)).map((tool) => <span className="tool-slot" key={tool.id}>
               {drawingMode === "workflow" && tool.id === "arrow" && <>
-                <button className={`tool-button shapes-toggle ${workflowShapes.some((shape) => shape.id === activeTool) ? "active" : ""}`} ref={shapeButtonRef} aria-label="Flowchart shapes" aria-expanded={Boolean(shapeMenu)} aria-haspopup="true" title="Flowchart shapes (B)" onClick={toggleShapeMenu}><Shapes size={19} strokeWidth={1.7} /><span>Shapes</span></button>
+                <button className={`tool-button shapes-toggle ${workflowShapes.some((shape) => shape.id === activeTool) ? "active" : ""}`} ref={shapeButtonRef} aria-label="Flowchart shapes" aria-expanded={Boolean(shapeMenu)} aria-haspopup="true" title="Flowchart shapes (B)" onClick={toggleShapeMenu}><Shapes size={19} strokeWidth={1.7} /><span>Flowchart</span></button>
                 {shapeMenu && <div className="shapes-menu" style={{ left: shapeMenu.left, top: shapeMenu.top }} role="group" aria-label="Choose a flowchart shape">
                   <div className="shapes-heading">FLOWCHART SHAPES <button aria-label="Close shapes" onClick={() => setShapeMenu(null)}><X size={15} /></button></div>
-                  {workflowShapes.map(({ id, label, shortcut, icon: Icon }) => <button key={id} className={`shape-option ${activeTool === id ? "selected" : ""}`} aria-pressed={activeTool === id} onClick={() => { setActiveTool(id); setShapeMenu(null); }}><Icon size={17} /><span>{label}</span>{shortcut && <kbd>{shortcut}</kbd>}</button>)}
+                  {workflowShapes.map(({ id, label, shortcut, icon: Icon }) => <button key={id} className={`shape-option ${activeTool === id ? "selected" : ""}`} aria-pressed={activeTool === id} onClick={() => { setActiveTool(id); setShapeMenu(null); }}>{id === "ellipse" ? <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><ellipse cx="12" cy="12" rx="10" ry="6" /></svg> : id === "parallelogram" ? <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true"><path d="M7 5h15l-5 14H2z" /></svg> : id === "subprocess" ? <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="2" y="5" width="20" height="14" /><path d="M6 5v14M18 5v14" /></svg> : <Icon size={17} />}<span>{label}</span>{shortcut && <kbd>{shortcut}</kbd>}</button>)}
                 </div>}
               </>}
               {drawingMode === "workflow" && tool.id === "arrow" ? <>
